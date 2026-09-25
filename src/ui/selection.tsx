@@ -8,7 +8,7 @@ import { buildingDef, TIERS } from '../data/buildings';
 import { Icons, Meter, Portrait, Shield, Tip, TipRows, UnitIcon, fmt, fmtSigned } from './common';
 import { buildOptions, cancelConstruction, cancelRecruit, orderBreakdown, provinceYield, recruit, recruitOptions, startConstruction } from '../sim/economy';
 import { age, fullName, skillOf } from '../sim/characters';
-import { armyPower, assignGeneral, availableCommanders, fleetCapacity, troopCount } from '../sim/military';
+import { armyPower, assignGeneral, availableCommanders, destroyFleet, fleetCapacity, troopCount } from '../sim/military';
 import { disbandArmy, disbandUnit, setArmyStance, splitArmy } from '../sim/commands';
 import { canAssault, siegeSupplyTurns } from '../sim/conquest';
 import { atWar, opinion, relationLabel } from '../sim/diplomacy';
@@ -582,10 +582,8 @@ export function FleetPanel(props: { app: App; cs: CampaignScene; id: number }) {
                     onClick={() => {
                       f.ships = f.ships.filter((x) => x !== s);
                       if (!f.ships.length) {
-                        import('../sim/military').then((m) => {
-                          m.destroyFleet(sim, f, 'disbanded');
-                          cs.select(null);
-                        });
+                        destroyFleet(sim, f, 'disbanded');
+                        cs.select(null);
                       }
                       app.notify();
                     }}

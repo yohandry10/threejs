@@ -1,4 +1,4 @@
-import { h } from 'preact';
+import { h, type ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type { App } from '../app/app';
 import type { CampaignScene } from '../scenes/campaignScene';
@@ -31,7 +31,7 @@ import { COUNCIL_SEATS, SEASON_NAMES, type Character, type IntrigueOp } from '..
 import { traitDef } from '../data/traits';
 import { troopCount } from '../sim/military';
 
-function SidePanel(props: { app: App; title: string; children: h.JSX.Element | h.JSX.Element[]; right?: h.JSX.Element }) {
+function SidePanel(props: { app: App; title: string; children: ComponentChildren; right?: h.JSX.Element }) {
   return (
     <div class="panel sidepanel pe">
       <div class="panel-head">

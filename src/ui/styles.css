@@ -248,3 +248,22 @@ h1, h2, h3, h4 { font-family: var(--serif); font-weight: normal; margin: 0; lett
 .selbox { position: absolute; border: 1px solid var(--gold-bright); background: rgba(230,198,126,0.08); pointer-events: none; z-index: 25; }
 .fmbtns { display: flex; flex-direction: column; gap: 4px; pointer-events: auto; padding: 8px; }
 .fmbtns .btn { font-size: 0.85em; padding: 4px 8px; }
+
+/* ---- battle markers & deployment ---- */
+.umarks { position: absolute; inset: 0; pointer-events: none; z-index: 12; overflow: hidden; }
+.umark { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 1px; will-change: transform; }
+.umark .ulbl { font-size: 11px; font-family: var(--sans); color: #f4ead2; background: rgba(12,11,10,0.78); border: 1px solid var(--fc, #888); border-left-width: 4px; padding: 0 5px; white-space: nowrap; border-radius: 2px; text-shadow: 0 1px 2px #000; }
+.umark .ubar { width: 34px; height: 3px; background: rgba(0,0,0,0.6); }
+.umark .ubar > div { height: 100%; background: #7fc27a; }
+.umark .ubar.crew > div { background: #c9a45c; }
+.umark.enemy .ulbl { border-color: #c0473b; color: #f3c9c2; }
+.umark.ally .ulbl { border-color: #7fb3d9; }
+.umark.sel .ulbl { background: rgba(80,64,30,0.92); border-color: var(--gold-bright); color: var(--gold-bright); }
+.umark.waver .ubar > div { background: var(--warn); }
+.umark.rout { opacity: 0.6; }
+.umark.rout .ubar > div { background: var(--danger); }
+.deploy-banner { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); padding: 10px 18px; display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: 22; text-align: center; max-width: 560px; }
+.bunit.gone { opacity: 0.3; pointer-events: none; }
+.bunit .meter { margin-top: 2px; height: 3px; }
+.intro-skip { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); color: var(--ink-dim); font-family: var(--serif); background: rgba(0,0,0,0.4); padding: 4px 14px; border-radius: 2px; cursor: pointer; z-index: 30; }
+.toast.warn { border-color: var(--danger); }

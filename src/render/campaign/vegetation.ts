@@ -80,7 +80,7 @@ export const vegUniforms = {
   uWind: { value: 1 },
 };
 
-function makeMaterial(): THREE.MeshStandardMaterial {
+export function makeVegMaterial(): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, vegUniforms);
@@ -127,7 +127,7 @@ export class Vegetation {
   chunks: Chunk[] = [];
   count = 0;
   constructor(g: WorldGeo, density: number, castShadow: boolean) {
-    this.material = makeMaterial();
+    this.material = makeVegMaterial();
     this.geoms = treeGeometries();
     const r = new Rng(4242);
     const CX = 8;

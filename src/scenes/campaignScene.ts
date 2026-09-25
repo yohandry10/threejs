@@ -124,6 +124,12 @@ export class CampaignScene implements GameScene {
       this.fogDirty = true;
     });
     for (const t of ['WAR_DECLARED', 'PEACE_SIGNED', 'ALLIANCE_FORMED', 'TREATY_SIGNED'] as const) on(t, () => this.setMapMode(this.mapMode, true));
+    on('SUCCESSION_OCCURRED', (e) => {
+      if (e.faction === this.sim.s.player) {
+        this.app.ui.coronation = { faction: e.faction as string, oldRuler: e.oldRuler as number, newRuler: e.newRuler as number };
+        this.app.audio?.event('coronation');
+      }
+    });
     on('*', () => this.app.notify());
   }
 
