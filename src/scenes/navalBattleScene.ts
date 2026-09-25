@@ -6,7 +6,7 @@ import type { BattleOutcome, BattleSetup } from '../sim/battles';
 import { Environment } from '../render/env/environment';
 import { Ocean } from '../render/env/ocean';
 import { ShipActor, WakeTrail } from '../render/ships/shipActor';
-import { shipUniforms } from '../render/ships/shipBuilder';
+import { syncShipLighting } from '../render/ships/shipBuilder';
 import { StrategyCamera } from '../render/campaign/campaignCamera';
 import { FigureBatch, ANIM, emblemIndex, emblemAtlas, figureUniforms } from '../render/figures/figures';
 import { puffTexture, ringTexture } from '../render/textures';
@@ -376,9 +376,7 @@ export class NavalBattleScene implements GameScene {
     sc.far = r * 6 + 800;
     sc.updateProjectionMatrix();
     this.ocean.update(this.time, cam, this.env.waveScale, this.env.sun.color, this.env.sun.intensity, this.env.hemi.color, this.env.lightning);
-    shipUniforms.uTime.value = this.time;
-    shipUniforms.uLamp.value = this.env.lampFactor;
-    shipUniforms.uBacklight.value = 0.08 + this.env.sun.intensity * 0.05;
+    syncShipLighting(this.env, this.time);
     figureUniforms.uTime.value = this.time;
     WakeTrail.updateShared(this.time, 0.35 + Math.min(1, this.env.sun.intensity * 0.3));
     // ships and crews

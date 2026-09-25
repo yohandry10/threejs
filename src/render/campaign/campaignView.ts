@@ -11,7 +11,7 @@ import { Settlements } from './settlements';
 import { Forces } from './forces';
 import type { Sim } from '../../sim/context';
 import { StrategyCamera } from './campaignCamera';
-import { shipUniforms } from '../ships/shipBuilder';
+import { syncShipLighting } from '../ships/shipBuilder';
 import { WakeTrail } from '../ships/shipActor';
 import type { Settings } from '../../persistence/settings';
 
@@ -137,9 +137,7 @@ export class CampaignView {
     vegUniforms.uAutumn.value = this.terrainU.uAutumn.value;
     vegUniforms.uWind.value = 1 + this.env.storm * 2;
     this.terrainU.uBorderWidth.value = Math.min(28, Math.max(4, this.cam.distance * 0.0055));
-    shipUniforms.uTime.value = this.time;
-    shipUniforms.uLamp.value = this.env.lampFactor;
-    shipUniforms.uBacklight.value = 0.08 + this.env.sun.intensity * 0.05;
+    syncShipLighting(this.env, this.time);
     WakeTrail.updateShared(this.time, 0.35 + Math.min(1, this.env.sun.intensity * 0.3));
   }
   dispose() {

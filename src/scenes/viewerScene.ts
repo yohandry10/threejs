@@ -3,7 +3,7 @@ import type { GameScene } from '../app/scene';
 import { Environment } from '../render/env/environment';
 import { Ocean } from '../render/env/ocean';
 import { ShipActor, WakeTrail } from '../render/ships/shipActor';
-import { shipUniforms } from '../render/ships/shipBuilder';
+import { syncShipLighting } from '../render/ships/shipBuilder';
 
 /**
  * QA / showcase scene (?viewer=ship&type=flagship&faction=aldmere&yaw=..&pitch=..&dist=..&tod=..):
@@ -67,10 +67,7 @@ export class ViewerScene implements GameScene {
     const t = new THREE.Vector3(hero.x, this.target.y, hero.z);
     this.camera.position.set(t.x + Math.sin(this.yaw) * Math.cos(this.pitch) * this.dist, t.y + Math.sin(this.pitch) * this.dist, t.z + Math.cos(this.yaw) * Math.cos(this.pitch) * this.dist);
     this.camera.lookAt(t);
-    shipUniforms.uTime.value = this.time;
-    shipUniforms.uLamp.value = this.env.lampFactor;
-    shipUniforms.uSunDir.value.copy(this.env.sunDir);
-    shipUniforms.uSunCol.value.copy(this.env.sun.color).multiplyScalar(Math.min(1.5, this.env.sun.intensity / 2.2));
+    syncShipLighting(this.env, this.time);
     this.env.update(dt, this.camera, t, 120);
     this.ocean.update(this.time, this.camera, this.env.waveScale, this.env.sun.color, this.env.sun.intensity, this.env.hemi.color, this.env.lightning);
     WakeTrail.updateShared(this.time, 0.4 + this.env.sun.intensity * 0.2);

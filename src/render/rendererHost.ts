@@ -25,6 +25,8 @@ const GradeShader = {
     }`,
 };
 
+const DEBUG_NOREFL = typeof location !== 'undefined' && new URLSearchParams(location.search).has('norefl');
+
 /** Owns the WebGL renderer and post-processing chain. Scenes render through it. */
 export class RendererHost {
   renderer: THREE.WebGLRenderer;
@@ -53,7 +55,7 @@ export class RendererHost {
     this.composer = new EffectComposer(this.renderer, rt);
     this.renderPass = new RenderPass(scene, cam);
     this.composer.addPass(this.renderPass);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.55, 0.92);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.24, 0.32, 0.96);
     this.composer.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);
@@ -108,7 +110,7 @@ export class RendererHost {
     const env = scene.userData.environment as { needsBake(): boolean; bake(r: THREE.WebGLRenderer): void } | undefined;
     if (env && env.needsBake()) env.bake(this.renderer);
     const ocean = scene.userData.ocean as { renderReflection(r: THREE.WebGLRenderer, s: THREE.Scene, c: THREE.Camera): void } | undefined;
-    if (ocean && this.settings.water >= 1) ocean.renderReflection(this.renderer, scene, camera);
+    if (ocean && this.settings.water >= 1 && !DEBUG_NOREFL) ocean.renderReflection(this.renderer, scene, camera);
     this.renderPass.scene = scene;
     this.renderPass.camera = camera;
     this.composer.render();

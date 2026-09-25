@@ -2079,3 +2079,12 @@ export function waterlineOutline(type: string, faction: string): { x: number; z:
   const port = [...star].reverse().map((p) => ({ x: -p.x, z: p.z, bow: p.bow }));
   return [...star, ...port];
 }
+
+/** Per-frame lighting inputs for ship materials (sail translucency, lanterns) from an Environment. */
+export function syncShipLighting(env: { sunDir: THREE.Vector3; sun: THREE.DirectionalLight; lampFactor: number }, time: number) {
+  shipUniforms.uTime.value = time;
+  shipUniforms.uLamp.value = env.lampFactor;
+  shipUniforms.uBacklight.value = 0.02 + Math.min(1, env.sun.intensity / 3) * 0.02;
+  shipUniforms.uSunDir.value.copy(env.sunDir);
+  shipUniforms.uSunCol.value.copy(env.sun.color).multiplyScalar(Math.min(1.5, env.sun.intensity / 2.2));
+}

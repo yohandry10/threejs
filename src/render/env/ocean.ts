@@ -171,7 +171,7 @@ void main() {
   }
   // sun specular (long glitter path at sunset)
   vec3 L = normalize(uSunDir + vec3(0.0, 0.02, 0.0));
-  float spec = pow(max(dot(R, L), 0.0), 900.0) * 9.0 + pow(max(dot(R, L), 0.0), 90.0) * 0.35;
+  float spec = pow(max(dot(R, L), 0.0), 1400.0) * 7.0 + pow(max(dot(R, L), 0.0), 160.0) * 0.18;
   spec *= smoothstep(-0.05, 0.05, uSunDir.y) * (1.0 - uOvercast * 0.85);
   col += uSunColor * spec;
   vec3 Lm = normalize(uMoonDir);
@@ -291,11 +291,12 @@ export class OceanReflection {
     vc.projectionMatrixInverse.copy(pm).invert();
     vc.layers.set(REFLECT_LAYER);
     const prevRT = renderer.getRenderTarget();
-    const prevAuto = renderer.shadowMap.autoUpdate;
+    const prevShadows = renderer.shadowMap.enabled;
     renderer.getClearColor(_cc);
     const prevAlpha = renderer.getClearAlpha();
     const prevBg = scene.background;
-    renderer.shadowMap.autoUpdate = false;
+    // reflections don't need shadows (and must not touch the shadow maps of the main pass)
+    renderer.shadowMap.enabled = false;
     scene.background = null;
     renderer.setRenderTarget(this.rt);
     renderer.setClearColor(0x000000, 0);
@@ -303,7 +304,7 @@ export class OceanReflection {
     renderer.render(scene, vc);
     renderer.setRenderTarget(prevRT);
     renderer.setClearColor(_cc, prevAlpha);
-    renderer.shadowMap.autoUpdate = prevAuto;
+    renderer.shadowMap.enabled = prevShadows;
     scene.background = prevBg;
     return true;
   }

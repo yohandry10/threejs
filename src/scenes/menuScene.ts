@@ -3,8 +3,9 @@ import type { GameScene } from '../app/scene';
 import { Environment } from '../render/env/environment';
 import { Ocean } from '../render/env/ocean';
 import { ShipActor, WakeTrail } from '../render/ships/shipActor';
-import { shipUniforms } from '../render/ships/shipBuilder';
+import { syncShipLighting } from '../render/ships/shipBuilder';
 import { Noise2D } from '../core/noise';
+import { Birds } from '../render/env/birds';
 
 /** Title screen backdrop: the flagship crossing a sunset sea, with a squadron and distant isles. */
 export class MenuScene implements GameScene {
@@ -15,32 +16,43 @@ export class MenuScene implements GameScene {
   ocean: Ocean;
   ships: ShipActor[] = [];
   time = 0;
+  private phi = 0;
+  private birds = new Birds(9, new THREE.Vector3(0, 0, 0), 90, 7);
   constructor(faction = 'aldmere') {
     this.env = new Environment(this.scene);
-    this.env.t = 0.735;
+    this.env.t = 0.737;
     this.env.dayLength = 1e9;
     this.env.setWeather('clear', 1, true);
     this.ocean = new Ocean(this.env.uniforms, null, new THREE.Vector2(1, 1));
     this.scene.add(this.ocean.mesh);
     this.ocean.enableReflection(this.scene);
+    // composition: view direction phi sits just right of the sun's azimuth so the sun shows left
+    // of centre (clear of the menu column); the hero sails toward the camera's right.
+    this.env.update(0, this.camera, new THREE.Vector3(), 120);
+    const sd = this.env.sunDir;
+    const sigma = Math.atan2(sd.x, sd.z);
+    this.phi = sigma - 0.2;
+    const dirAt = (a: number) => new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
     const hero = new ShipActor('flagship', faction);
-    hero.heading = -Math.PI * 0.62;
-    hero.speed = 4.2;
+    hero.heading = this.phi - Math.PI / 2 - 0.62;
+    hero.speed = 3.2;
     hero.addTo(this.scene);
     this.ships.push(hero);
     const escorts: [string, string, number, number][] = [
-      ['carrack', faction, -70, -60],
-      ['galley', faction, 60, -95],
-      ['cog', 'sabeline', -220, 260],
+      ['carrack', faction, 0.3, 230],
+      ['galley', faction, 0.52, 330],
+      ['cog', 'sabeline', 0.18, 520],
+      ['hulk', 'tamsin', -0.32, 700],
     ];
-    for (const [t, f, dx, dz] of escorts) {
-      const s = new ShipActor(t, f);
-      s.x = dx;
-      s.z = dz;
-      s.heading = hero.heading + (Math.random() - 0.5) * 0.1;
-      s.speed = 4.2;
-      s.addTo(this.scene);
-      this.ships.push(s);
+    for (const [t, f, da, d] of escorts) {
+      const sh = new ShipActor(t, f);
+      const p = dirAt(this.phi + da).multiplyScalar(d);
+      sh.x = p.x;
+      sh.z = p.z;
+      sh.heading = hero.heading + (Math.random() - 0.5) * 0.15;
+      sh.speed = 3.2;
+      sh.addTo(this.scene);
+      this.ships.push(sh);
     }
     this.env.sun.castShadow = true;
     this.env.sun.shadow.mapSize.set(2048, 2048);
@@ -53,6 +65,7 @@ export class MenuScene implements GameScene {
     sc.far = 800;
     this.env.sun.shadow.bias = -0.0005;
     this.addIsles();
+    this.scene.add(this.birds.mesh);
   }
   private addIsles() {
     const n = new Noise2D(7);
@@ -90,18 +103,19 @@ export class MenuScene implements GameScene {
       s.update(dt, this.ocean.sampler, s.heading + 0.4, 1);
       s.setLampVisible(true);
     }
-    // slow cinematic orbit around the flagship
-    // keep the setting sun behind the ship for a golden silhouette
-    const sd = this.env.sunDir;
-    const sunAz = Math.atan2(sd.z, sd.x);
-    const a = sunAz + Math.PI + Math.sin(this.time * 0.03) * 0.75;
-    const r = 78 + Math.sin(this.time * 0.05) * 14;
+    // slow drift of the camera around the fixed composition
+    const phi = this.phi + Math.sin(this.time * 0.03) * 0.025;
+    const toShip = phi - 0.22 + Math.sin(this.time * 0.021) * 0.02;
+    const dist = 125 + Math.sin(this.time * 0.04) * 6;
+    const cam = new THREE.Vector3(hero.x, 0, hero.z).addScaledVector(new THREE.Vector3(Math.sin(toShip), 0, Math.cos(toShip)), -dist);
+    cam.y = 11 + Math.sin(this.time * 0.05) * 1.2;
+    this.camera.position.copy(cam);
+    const look = cam.clone().add(new THREE.Vector3(Math.sin(phi), -0.02, Math.cos(phi)).multiplyScalar(100));
+    look.y = cam.y + 2.5;
+    this.camera.lookAt(look);
     const target = new THREE.Vector3(hero.x, 12, hero.z);
-    this.camera.position.set(hero.x + Math.cos(a) * r, 13 + Math.sin(this.time * 0.07) * 4, hero.z + Math.sin(a) * r);
-    this.camera.lookAt(target);
-    shipUniforms.uTime.value = this.time;
-    shipUniforms.uLamp.value = this.env.lampFactor;
-    shipUniforms.uBacklight.value = 0.08 + this.env.sun.intensity * 0.06;
+    syncShipLighting(this.env, this.time);
+    this.birds.update(this.time, new THREE.Vector3(hero.x, 0, hero.z));
     this.env.update(dt, this.camera, target, 120);
     this.ocean.update(this.time, this.camera, this.env.waveScale, this.env.sun.color, this.env.sun.intensity, this.env.hemi.color, this.env.lightning);
     WakeTrail.updateShared(this.time, 0.4 + this.env.sun.intensity * 0.2);
@@ -116,6 +130,7 @@ export class MenuScene implements GameScene {
       s.dispose();
     }
     this.ocean.dispose();
+    this.birds.dispose();
     this.env.dispose();
   }
 }

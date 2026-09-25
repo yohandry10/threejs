@@ -21,8 +21,8 @@ vec3 skyBase(vec3 d) {
   vec3 colD = mix(zenD, horD, pow(1.0 - up, 3.2));
   // sunset: deep blue-violet zenith, purple middle, burning orange horizon toward the sun
   vec3 zenS = vec3(0.03, 0.12, 0.3);
-  vec3 midS = mix(vec3(0.16, 0.3, 0.48), vec3(0.95, 0.45, 0.2), pow(az, 2.6));
-  vec3 horS = mix(vec3(0.5, 0.36, 0.44), vec3(1.0, 0.52, 0.14), pow(az, 1.8));
+  vec3 midS = mix(vec3(0.14, 0.27, 0.46), vec3(0.78, 0.34, 0.14), pow(az, 2.6));
+  vec3 horS = mix(vec3(0.44, 0.3, 0.4), vec3(0.95, 0.4, 0.09), pow(az, 1.8));
   vec3 colS = mix(zenS, midS, pow(1.0 - up, 2.4));
   colS = mix(colS, horS, pow(1.0 - up, 8.0));
   vec3 col = mix(colD, colS, clamp(uSunset, 0.0, 1.0));
@@ -34,10 +34,10 @@ vec3 skyBase(vec3 d) {
   col = mix(col, grey * vec3(0.92, 0.96, 1.0) * (1.0 - uNight * 0.7) * 1.1, uOvercast * 0.78);
   // sun glow (mie)
   float c = max(dot(d, uSunDir), 0.0);
-  float glow = pow(c, 4.0) * 0.1 + pow(c, 24.0) * 0.32 + pow(c, 160.0) * 0.9;
+  float glow = pow(c, 6.0) * 0.035 + pow(c, 40.0) * 0.14 + pow(c, 300.0) * 0.5;
   col += uSunColor * glow * (1.0 - uNight) * (1.0 - uOvercast * 0.7);
   // a warm band hugging the horizon under the setting sun
-  col += vec3(1.0, 0.4, 0.1) * clamp(uSunset, 0.0, 1.0) * pow(az, 4.0) * exp(-up * 16.0) * 0.7 * (1.0 - uOvercast);
+  col += vec3(1.0, 0.36, 0.06) * clamp(uSunset, 0.0, 1.0) * pow(az, 4.0) * exp(-up * 18.0) * 0.42 * (1.0 - uOvercast);
   // moon glow
   float cm = max(dot(d, uMoonDir), 0.0);
   col += vec3(0.35, 0.42, 0.6) * pow(cm, 24.0) * 0.25 * uNight;
@@ -80,7 +80,7 @@ void main() {
   // sun disc with a hot core and soft limb (bloom does the rest)
   float disc = smoothstep(0.99915, 0.99958, cs);
   float halo = pow(max(cs, 0.0), 900.0);
-  vec3 sunTint = mix(vec3(1.0, 0.92, 0.75), vec3(1.0, 0.62, 0.3), clamp(uSunset, 0.0, 1.0));
+  vec3 sunTint = mix(vec3(1.0, 0.92, 0.75), vec3(1.0, 0.72, 0.38), clamp(uSunset, 0.0, 1.0));
   col += sunTint * uSunColor * (disc * 4.0 + halo * 1.2) * day * (1.0 - uOvercast);
   // stars
   if (uNight > 0.01 && d.y > 0.0) {
@@ -102,37 +102,44 @@ void main() {
     vec2 cp = d.xz / (up + 0.055);
     vec2 wind = vec2(uTime * 0.0022, uTime * 0.0009);
     float fade = smoothstep(0.0, 0.05, up);
-    // --- high cirrus streaks
+    // --- high cirrus streaks (thin, wind-combed)
     vec2 q = cp * 0.011 + wind * 0.6;
-    q = vec2(q.x * 0.45 + q.y * 0.15, q.y * 1.7 - q.x * 0.2);
-    float ci = smoothstep(0.52, 0.86, texture2D(uNoise, q).r * 0.62 + texture2D(uNoise, q * 3.3 + 0.2).g * 0.38);
-    vec3 ciCol = mix(vec3(0.98, 0.98, 1.0), vec3(1.0, 0.6, 0.45) * 1.35, sunset * (0.45 + 0.55 * az));
+    q = vec2(q.x * 0.4 + q.y * 0.12, q.y * 1.9 - q.x * 0.2);
+    float ci = smoothstep(0.6, 0.9, texture2D(uNoise, q).r * 0.62 + texture2D(uNoise, q * 3.3 + 0.2).g * 0.38);
+    vec3 ciCol = mix(vec3(0.98, 0.98, 1.0), vec3(1.0, 0.66, 0.46) * 1.25, sunset * (0.3 + 0.7 * az));
     ciCol = mix(ciCol, vec3(0.06, 0.07, 0.1), uNight * 0.9);
-    col = mix(col, ciCol, ci * 0.42 * fade * (1.0 - uOvercast * 0.5));
-    // --- cumulus / stratocumulus layer with self-shadowing
-    vec2 p = cp * 0.042 + wind;
-    vec2 warp = vec2(texture2D(uNoise, p * 0.6).g, texture2D(uNoise, p * 0.6 + 0.37).b) - 0.5;
-    p += warp * 0.22;
+    col = mix(col, ciCol, ci * 0.3 * fade * (1.0 - uOvercast * 0.5));
+    // --- cumulus with self-shadowing
+    vec2 p = cp * 0.034 + wind;
+    vec2 warp = vec2(texture2D(uNoise, p * 0.5).g, texture2D(uNoise, p * 0.5 + 0.37).b) - 0.5;
+    p += warp * 0.09;
     float n = fbmT(p);
-    float cover = mix(0.6, 0.33, uCloudCover);
-    float dens = smoothstep(cover, cover + 0.26, n);
+    float cover = mix(0.63, 0.36, uCloudCover);
+    float dens = smoothstep(cover, cover + 0.17, n);
     if (dens > 0.001) {
-      float nS = fbmT(p + sdir * 0.018);
-      float nS2 = fbmT(p + sdir * 0.045);
+      float nS = fbmT(p + sdir * 0.016);
+      float nS2 = fbmT(p + sdir * 0.04);
       float shade = clamp((nS - n) * 5.5 + (nS2 - n) * 2.5 + 0.42, 0.0, 1.0);
-      vec3 litCol = mix(vec3(1.0, 0.985, 0.96) * 1.05, vec3(1.0, 0.62, 0.38) * 1.35, sunset);
-      vec3 shadowCol = mix(vec3(0.55, 0.6, 0.7), vec3(0.34, 0.24, 0.42), sunset);
+      vec3 litCol = mix(vec3(1.0, 0.985, 0.96) * 1.02, vec3(1.0, 0.56, 0.3) * 1.05, sunset);
+      vec3 shadowCol = mix(vec3(0.55, 0.6, 0.7), vec3(0.3, 0.26, 0.42), sunset);
       vec3 cc = mix(litCol, shadowCol, shade);
-      cc *= mix(1.0, 0.82, smoothstep(0.5, 1.0, dens));
-      // forward scattering rims around the sun
-      cc += uSunColor * pow(max(cs, 0.0), 10.0) * (1.0 - dens * 0.55) * 1.3 * day;
-      // low clouds on the horizon glow orange at sunset
-      cc = mix(cc, vec3(1.0, 0.44, 0.18) * 1.25, sunset * exp(-up * 7.0) * (0.3 + 0.7 * az) * 0.65 * (1.0 - shade * 0.5));
-      // night and overcast
+      cc *= mix(1.0, 0.84, smoothstep(0.5, 1.0, dens));
+      // silver linings: thin edges near the sun light up
+      cc += uSunColor * pow(max(cs, 0.0), 24.0) * (1.0 - dens) * 0.55 * day;
+      // low clouds glow orange at sunset
+      cc = mix(cc, vec3(1.0, 0.42, 0.16) * 1.0, sunset * exp(-up * 7.0) * (0.3 + 0.7 * az) * 0.6 * (1.0 - shade * 0.5));
       cc = mix(cc, vec3(0.05, 0.06, 0.085) + vec3(0.1, 0.12, 0.16) * (1.0 - shade), uNight * 0.92);
       cc = mix(cc, vec3(0.62, 0.64, 0.68) * (1.0 - shade * 0.35) * (1.0 - uNight * 0.85), uOvercast * 0.7);
       col = mix(col, cc, dens * fade * 0.97);
     }
+    // --- a low bank of clouds along the horizon, lit from below at sunset
+    float ang = atan(d.z, d.x);
+    vec2 bq = vec2(ang * 2.2, up * 16.0) + wind * 0.4;
+    float bn = texture2D(uNoise, bq * 0.22).r * 0.6 + texture2D(uNoise, bq * 0.6 + 0.3).g * 0.4;
+    float bank = smoothstep(0.46, 0.7, bn) * exp(-up * 20.0) * smoothstep(0.0, 0.012, up);
+    vec3 bankCol = mix(mix(vec3(0.55, 0.58, 0.66), vec3(0.3, 0.22, 0.36), sunset), vec3(0.95, 0.42, 0.16), pow(az, 2.2) * sunset);
+    bankCol = mix(bankCol, vec3(0.05, 0.06, 0.08), uNight * 0.9);
+    col = mix(col, bankCol, bank * 0.85);
     // overcast: a uniform grey deck thickening toward the horizon
     col = mix(col, vec3(0.55, 0.57, 0.62) * (1.0 - uNight * 0.85), uOvercast * 0.35 * fade);
   }
