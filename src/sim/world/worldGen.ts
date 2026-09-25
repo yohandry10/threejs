@@ -121,14 +121,15 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
 
       let h: number;
       if (f < 0) {
-        h = -(2.5 + -f * 330) + n3.fbm(u * 30, v * 30, 2) * 3;
+        h = -(0.6 + -f * 110 + Math.max(0, -f - 0.05) * 420) + n3.fbm(u * 30, v * 30, 2) * 1.5;
         h = Math.max(h, -170);
       } else {
         const inland = smoothstep(0, 0.12, f);
-        h = 3 + f * 70 + rugged * 110 * smoothstep(0, 0.07, f);
-        h += n3.fbm(u * 14, v * 14, 4) * 16 * inland;
+        const cliffs = rugged > 0.3 ? rugged : 0;
+        h = 0.9 + 55 * Math.pow(f, 1.5) + cliffs * 90 * smoothstep(0.0, 0.08, f);
+        h += n3.fbm(u * 14, v * 14, 4) * 11 * smoothstep(0.02, 0.2, f);
         const hm = smoothstep(0.15, 0.55, n1.fbm(u * 3.2 + 7, v * 3.2 + 3, 3));
-        if (hm > 0) h += n1.ridged(u * 11, v * 11, 4) * 110 * hm * inland;
+        if (hm > 0) h += n1.ridged(u * 11, v * 11, 4) * 70 * hm * smoothstep(0.03, 0.2, f);
         for (const r of ranges) {
           if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
           let dmin = 1e9;
@@ -162,20 +163,24 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
   for (const rd of RIVERS) {
     const raw = catmull(rd.points.map(([u, v]) => [u * W, v * H]), 1);
     // resample at ~12 units with meander noise
-    const dense: [number, number][] = [];
     const spline = catmull(raw, 10);
-    let acc = 0;
-    dense.push(spline[0]);
-    for (let i = 1; i < spline.length; i++) {
-      const [ax, az] = spline[i - 1];
-      const [bx, bz] = spline[i];
-      acc += Math.hypot(bx - ax, bz - az);
-      if (acc >= 12) {
-        acc = 0;
-        dense.push([bx, bz]);
+    const dense: [number, number][] = [spline[0]];
+    {
+      const STEP = 7;
+      let carry = 0;
+      for (let i = 1; i < spline.length; i++) {
+        const [ax, az] = spline[i - 1];
+        const [bx, bz] = spline[i];
+        const segLen = Math.hypot(bx - ax, bz - az);
+        let t = STEP - carry;
+        while (t <= segLen) {
+          dense.push([ax + ((bx - ax) * t) / segLen, az + ((bz - az) * t) / segLen]);
+          t += STEP;
+        }
+        carry = segLen - (t - STEP);
       }
+      dense.push(spline[spline.length - 1]);
     }
-    dense.push(spline[spline.length - 1]);
     // meander
     for (let i = 1; i < dense.length - 1; i++) {
       const [ax, az] = dense[i - 1];
@@ -183,7 +188,7 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       const tx = bx - ax;
       const tz = bz - az;
       const l = Math.hypot(tx, tz) || 1;
-      const m = n3.noise(i * 0.045 + rivers.length * 10, 0.5) * 42;
+      const m = n3.noise(i * 0.012 + rivers.length * 10, 0.5) * 38 + n3.noise(i * 0.05 + 3.3, rivers.length) * 9;
       dense[i] = [dense[i][0] + (-tz / l) * m, dense[i][1] + (tx / l) * m];
     }
     const n = dense.length;
@@ -206,33 +211,6 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
     for (let i = 0; i < n; i++) if (levels[i] < 0.6) levels[i] = 0.6 - i * 0.0001;
     rivers.push({ name: rd.name, pts, widths, levels });
   }
-  // carve
-  for (const r of rivers) {
-    const n = r.widths.length;
-    for (let i = 0; i < n; i++) {
-      const px = r.pts[i * 2];
-      const pz = r.pts[i * 2 + 1];
-      const w = r.widths[i];
-      const bank = w * 1.2 + 24;
-      const rad = w * 0.5 + bank;
-      const x0 = Math.max(0, Math.floor((px - rad) / HM_STEP));
-      const x1 = Math.min(hmW - 1, Math.ceil((px + rad) / HM_STEP));
-      const z0 = Math.max(0, Math.floor((pz - rad) / HM_STEP));
-      const z1 = Math.min(hmH - 1, Math.ceil((pz + rad) / HM_STEP));
-      const bed = r.levels[i] - 2.5 - w * 0.06;
-      for (let iz = z0; iz <= z1; iz++)
-        for (let ix = x0; ix <= x1; ix++) {
-          const d = Math.hypot(ix * HM_STEP - px, iz * HM_STEP - pz);
-          if (d > rad) continue;
-          const k = smoothstep(w * 0.5, w * 0.5 + bank, d);
-          const idx = iz * hmW + ix;
-          const target = bed + (r.levels[i] + 3 - bed) * k * 0.4;
-          const blended = target + (height[idx] - target) * k;
-          if (blended < height[idx]) height[idx] = blended;
-        }
-    }
-  }
-
   // ---------------------------------------------------------------- nav coarse pass
   progress(0.42, 'Charting coasts');
   const nav = new Uint8Array(navW * navH);
@@ -364,6 +342,59 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       }
   }
 
+  // carve a channel, then raise low banks into levees so the water never floods sideways.
+  // Pass 1: nearest river point per heightmap sample; pass 2: shape the terrain.
+  const rD = new Float32Array(hmW * hmH).fill(1e9);
+  const rH = new Float32Array(hmW * hmH);
+  {
+    const rL = new Float32Array(hmW * hmH);
+    const rB = new Float32Array(hmW * hmH);
+    for (const r of rivers) {
+      const n = r.widths.length;
+      for (let i = 0; i < n; i++) {
+        const px = r.pts[i * 2];
+        const pz = r.pts[i * 2 + 1];
+        const w = r.widths[i];
+        const half = w * 0.5 + 3;
+        const bank = w * 1.1 + 36;
+        const rad = half + bank;
+        const x0 = Math.max(0, Math.floor((px - rad) / HM_STEP));
+        const x1 = Math.min(hmW - 1, Math.ceil((px + rad) / HM_STEP));
+        const z0 = Math.max(0, Math.floor((pz - rad) / HM_STEP));
+        const z1 = Math.min(hmH - 1, Math.ceil((pz + rad) / HM_STEP));
+        for (let iz = z0; iz <= z1; iz++)
+          for (let ix = x0; ix <= x1; ix++) {
+            const d = Math.hypot(ix * HM_STEP - px, iz * HM_STEP - pz);
+            const idx = iz * hmW + ix;
+            if (d < rad && d < rD[idx]) {
+              rD[idx] = d;
+              rL[idx] = r.levels[i];
+              rH[idx] = half;
+              rB[idx] = bank;
+            }
+          }
+      }
+    }
+    for (let idx = 0; idx < hmW * hmH; idx++) {
+      const d = rD[idx];
+      if (d >= 1e8) continue;
+      const lvl = rL[idx];
+      const half = rH[idx];
+      const w = (half - 3) * 2;
+      const bed = lvl - 2.2 - w * 0.05;
+      const inner = half + 10;
+      if (d <= inner) {
+        height[idx] = bed + (lvl + 1.2 - bed) * smoothstep(half * 0.55, inner, d);
+      } else {
+        const k = smoothstep(inner, inner + rB[idx], d);
+        const bankTop = lvl + 1.2 + k * 3;
+        const carved = bankTop + (height[idx] - bankTop) * k;
+        if (height[idx] > carved) height[idx] = carved;
+        if (height[idx] < lvl + 0.7 && lvl > 1.2) height[idx] = Math.max(height[idx], lvl + 0.7);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- final nav & biomes
   progress(0.56, 'Surveying the land');
   const biome = new Uint8Array(hmW * hmH);
@@ -431,8 +462,14 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       const c = cz * navW + cx;
       const h = sampleNavHeight(cx, cz);
       navH0[c] = h;
-      if (h < 0.3) {
+      const hi = Math.min(hmH - 1, cz * 2 + 1) * hmW + Math.min(hmW - 1, cx * 2 + 1);
+      const inRiver = rD[hi] < rH[hi] + 12;
+      if (h < 0.3 && !(inRiver && h > -12)) {
         nav[c] = h < -22 ? NavT.Deep : NavT.Shallow;
+        continue;
+      }
+      if (inRiver && h < 0.3) {
+        nav[c] = NavT.Plains;
         continue;
       }
       const b = biome[Math.min(hmH - 1, cz * 2 + 1) * hmW + Math.min(hmW - 1, cx * 2 + 1)];
