@@ -200,6 +200,7 @@ export function BattleResult(props: { app: App; cs: CampaignScene }) {
         </div>
       )}
       <div class="parchment" style={{ marginTop: '10px' }}>
+        {outcome.summary ? `${outcome.summary} ` : ''}
         {lb.text}
       </div>
       {(outcome.generalsKilled.length > 0 || outcome.generalsWounded.length > 0) && (
