@@ -105,6 +105,10 @@ export class RendererHost {
   render(scene: THREE.Scene, camera: THREE.Camera) {
     if (this.contextLost) return;
     this.renderer.info.reset();
+    const env = scene.userData.environment as { needsBake(): boolean; bake(r: THREE.WebGLRenderer): void } | undefined;
+    if (env && env.needsBake()) env.bake(this.renderer);
+    const ocean = scene.userData.ocean as { renderReflection(r: THREE.WebGLRenderer, s: THREE.Scene, c: THREE.Camera): void } | undefined;
+    if (ocean && this.settings.water >= 1) ocean.renderReflection(this.renderer, scene, camera);
     this.renderPass.scene = scene;
     this.renderPass.camera = camera;
     this.composer.render();

@@ -22,6 +22,7 @@ export class MenuScene implements GameScene {
     this.env.setWeather('clear', 1, true);
     this.ocean = new Ocean(this.env.uniforms, null, new THREE.Vector2(1, 1));
     this.scene.add(this.ocean.mesh);
+    this.ocean.enableReflection(this.scene);
     const hero = new ShipActor('flagship', faction);
     hero.heading = -Math.PI * 0.62;
     hero.speed = 4.2;

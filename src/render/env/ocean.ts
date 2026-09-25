@@ -54,6 +54,8 @@ uniform vec3 uCenter;
 uniform sampler2D uHeight;
 uniform vec2 uWorldSize;
 uniform float uHasHeight;
+uniform mat4 uReflMatrix;
+varying vec4 vReflCoord;
 varying vec3 vWorld;
 varying vec3 vNormalW;
 varying float vCrest;
@@ -96,6 +98,7 @@ void main() {
   }
   p += disp;
   vWorld = p;
+  vReflCoord = uReflMatrix * vec4(p.x, 0.0, p.z, 1.0);
   vNormalW = normalize(cross(binormal, tangent));
   vCrest = crest;
   vDepth = depth;
@@ -117,6 +120,9 @@ uniform float uLightning;
 uniform sampler2D tFogW;
 uniform float uFogW;
 uniform vec2 uWorldSizeF;
+uniform sampler2D tReflect;
+uniform float uUseRefl;
+varying vec4 vReflCoord;
 varying vec3 vWorld;
 varying vec3 vNormalW;
 varying float vCrest;
@@ -154,6 +160,15 @@ void main() {
   float sss = pow(max(dot(V, -uSunDir) * 0.5 + 0.5, 0.0), 4.0) * clamp(vCrest * 1.4 + 0.3, 0.0, 1.0);
   lit += vec3(0.05, 0.28, 0.24) * sss * uLightColor * 0.5 * (1.0 - uNight);
   vec3 col = mix(lit, refl, fresnel);
+  // planar reflection of ships and nearby objects, rippled by the surface normal
+  if (uUseRefl > 0.5) {
+    vec2 rip = (N.xz - vNormalW.xz * 0.6) * 0.11 + pert * 0.35;
+    vec2 ruv = vReflCoord.xy / vReflCoord.w + rip * (1.0 - smoothstep(80.0, 900.0, dist));
+    vec4 rc = texture2D(tReflect, ruv);
+    // reflections are darker and break up on the rougher facets
+    float k = rc.a * clamp(0.14 + fresnel * 0.75, 0.0, 0.7);
+    col = mix(col, rc.rgb * 0.82, k);
+  }
   // sun specular (long glitter path at sunset)
   vec3 L = normalize(uSunDir + vec3(0.0, 0.02, 0.0));
   float spec = pow(max(dot(R, L), 0.0), 900.0) * 9.0 + pow(max(dot(R, L), 0.0), 90.0) * 0.35;
@@ -218,6 +233,85 @@ function radialGrid(rings: number, segments: number, r0: number, growth: number)
   return g;
 }
 
+/** Objects on this layer are mirrored in the water. */
+export const REFLECT_LAYER = 1;
+
+const _plane = new THREE.Plane();
+const _normal = new THREE.Vector3(0, 1, 0);
+const _rwp = new THREE.Vector3();
+const _cwp = new THREE.Vector3();
+const _rot = new THREE.Matrix4();
+const _look = new THREE.Vector3();
+const _clip = new THREE.Vector4();
+const _view = new THREE.Vector3();
+const _target = new THREE.Vector3();
+const _q = new THREE.Vector4();
+const _cc = new THREE.Color();
+const _size = new THREE.Vector2();
+
+/** Planar reflection of the REFLECT_LAYER objects about the sea plane (oblique near-plane clipping). */
+export class OceanReflection {
+  rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+  camera = new THREE.PerspectiveCamera();
+  textureMatrix = new THREE.Matrix4();
+  level = 0.2;
+  render(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+    renderer.getDrawingBufferSize(_size);
+    const w = Math.max(4, Math.floor(_size.x * 0.5));
+    const h = Math.max(4, Math.floor(_size.y * 0.5));
+    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    _rwp.set(0, this.level, 0);
+    _cwp.setFromMatrixPosition(camera.matrixWorld);
+    _view.subVectors(_rwp, _cwp);
+    if (_view.dot(_normal) > 0) return false;
+    _view.reflect(_normal).negate().add(_rwp);
+    _rot.extractRotation(camera.matrixWorld);
+    _look.set(0, 0, -1).applyMatrix4(_rot).add(_cwp);
+    _target.subVectors(_rwp, _look).reflect(_normal).negate().add(_rwp);
+    const vc = this.camera;
+    vc.position.copy(_view);
+    vc.up.set(0, 1, 0).applyMatrix4(_rot).reflect(_normal);
+    vc.lookAt(_target);
+    vc.updateMatrixWorld();
+    vc.projectionMatrix.copy((camera as THREE.PerspectiveCamera).projectionMatrix);
+    this.textureMatrix.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+    this.textureMatrix.multiply(vc.projectionMatrix).multiply(vc.matrixWorldInverse);
+    _plane.setFromNormalAndCoplanarPoint(_normal, _rwp).applyMatrix4(vc.matrixWorldInverse);
+    _clip.set(_plane.normal.x, _plane.normal.y, _plane.normal.z, _plane.constant);
+    const pm = vc.projectionMatrix;
+    _q.x = (Math.sign(_clip.x) + pm.elements[8]) / pm.elements[0];
+    _q.y = (Math.sign(_clip.y) + pm.elements[9]) / pm.elements[5];
+    _q.z = -1.0;
+    _q.w = (1.0 + pm.elements[10]) / pm.elements[14];
+    _clip.multiplyScalar(2.0 / _clip.dot(_q));
+    pm.elements[2] = _clip.x;
+    pm.elements[6] = _clip.y;
+    pm.elements[10] = _clip.z + 1.0;
+    pm.elements[14] = _clip.w;
+    vc.projectionMatrixInverse.copy(pm).invert();
+    vc.layers.set(REFLECT_LAYER);
+    const prevRT = renderer.getRenderTarget();
+    const prevAuto = renderer.shadowMap.autoUpdate;
+    renderer.getClearColor(_cc);
+    const prevAlpha = renderer.getClearAlpha();
+    const prevBg = scene.background;
+    renderer.shadowMap.autoUpdate = false;
+    scene.background = null;
+    renderer.setRenderTarget(this.rt);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, false);
+    renderer.render(scene, vc);
+    renderer.setRenderTarget(prevRT);
+    renderer.setClearColor(_cc, prevAlpha);
+    renderer.shadowMap.autoUpdate = prevAuto;
+    scene.background = prevBg;
+    return true;
+  }
+  dispose() {
+    this.rt.dispose();
+  }
+}
+
 export class Ocean {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
@@ -246,6 +340,9 @@ export class Ocean {
           tFogW: { value: null },
           uFogW: { value: 0 },
           uWorldSizeF: { value: new THREE.Vector2(1, 1) },
+          tReflect: { value: null },
+          uReflMatrix: { value: new THREE.Matrix4() },
+          uUseRefl: { value: 0 },
         },
       ]),
       vertexShader: vert,
@@ -259,6 +356,20 @@ export class Ocean {
     this.mesh = new THREE.Mesh(geo, this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 2;
+  }
+  reflection: OceanReflection | null = null;
+  /** Turn on planar reflections (ships etc. on REFLECT_LAYER) for this ocean in the given scene. */
+  enableReflection(scene: THREE.Scene) {
+    if (!this.reflection) this.reflection = new OceanReflection();
+    this.material.uniforms.tReflect.value = this.reflection.rt.texture;
+    scene.userData.ocean = this;
+  }
+  /** Called by the renderer before the main pass. */
+  renderReflection(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+    if (!this.reflection) return;
+    const ok = this.reflection.render(renderer, scene, camera);
+    this.material.uniforms.uUseRefl.value = ok ? 1 : 0;
+    this.material.uniforms.uReflMatrix.value.copy(this.reflection.textureMatrix);
   }
   update(time: number, camera: THREE.Camera, waveScale: number, sunColor: THREE.Color, sunI: number, ambient: THREE.Color, lightning: number) {
     const u = this.material.uniforms;
@@ -275,5 +386,6 @@ export class Ocean {
   dispose() {
     this.mesh.geometry.dispose();
     this.material.dispose();
+    this.reflection?.dispose();
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildShip, type ShipModel, type SailUniforms } from './shipBuilder';
+import { buildShip, waterlineOutline, type ShipModel, type SailUniforms } from './shipBuilder';
 import type { WaveSampler } from '../env/ocean';
 import { noiseTexture } from '../textures';
 
@@ -26,14 +26,18 @@ const wakeMat = () =>
       varying float vSide;
       varying vec3 vW;
       void main() {
-        float n = texture2D(uNoise, vW.xz * 0.06 + uTime * 0.02).r;
-        float n2 = texture2D(uNoise, vW.xz * 0.19 - uTime * 0.03).g;
+        // frothy foam: high-frequency cells that break up as the trail ages
+        float n = texture2D(uNoise, vW.xz * 0.21 + uTime * 0.015).r;
+        float n2 = texture2D(uNoise, vW.xz * 0.63 - uTime * 0.03).g;
+        float n3 = texture2D(uNoise, vW.xz * 1.7 + uTime * 0.05).b;
+        float froth = smoothstep(0.38, 0.72, n * 0.55 + n2 * 0.3 + n3 * 0.25);
         float edge = 1.0 - abs(vSide);
-        float trail = smoothstep(0.0, 0.35, edge) * (1.0 - vAge);
-        float lines = smoothstep(0.55, 1.0, abs(vSide)) * (1.0 - vAge) * 0.9;
-        float birth = smoothstep(0.0, 0.06, vAge);
-        float a = max(trail * (0.25 + 0.75 * n * n2), lines * n2) * smoothstep(0.62, 0.25, n * vAge + vAge * 0.6) * birth;
-        gl_FragColor = vec4(vec3(0.92, 0.95, 0.97) * uLight, a * 0.6);
+        float core = smoothstep(0.15, 0.85, edge) * (1.0 - vAge);
+        float rims = smoothstep(0.6, 0.95, abs(vSide)) * (1.0 - vAge);
+        float birth = smoothstep(0.0, 0.04, vAge);
+        float breakup = smoothstep(0.75, 0.2, vAge + (1.0 - froth) * 0.55);
+        float a = (core * froth * 0.8 + rims * froth * 0.6) * breakup * birth;
+        gl_FragColor = vec4(vec3(0.9, 0.94, 0.96) * uLight, a * 0.55);
       }`,
     transparent: true,
     depthWrite: false,
@@ -42,6 +46,7 @@ const wakeMat = () =>
   });
 
 let sharedWakeMat: THREE.ShaderMaterial | null = null;
+const tmpW = { h: 0, nx: 0, nz: 0 };
 
 /** Foam wake ribbon trailing a ship. Width and opacity depend on speed and ship size. */
 export class WakeTrail {
@@ -75,17 +80,18 @@ export class WakeTrail {
       sharedWakeMat.uniforms.uTime.value = time;
       sharedWakeMat.uniforms.uLight.value = light;
     }
+    HullFoam.updateShared(time, light);
   }
-  update(dt: number, sx: number, sz: number, heading: number, speed: number) {
+  update(dt: number, sx: number, sz: number, heading: number, speed: number, waves?: WaveSampler) {
     const life = 7;
     for (const p of this.pts) {
       p.age += dt / life;
-      p.w += dt * (1.2 + speed * 0.15);
+      p.w += dt * (0.35 + speed * 0.08);
     }
     this.pts = this.pts.filter((p) => p.age < 1);
     const last = this.pts[0];
     if (speed > 0.3 && (!last || Math.hypot(last.x - sx, last.z - sz) > 1.6)) {
-      this.pts.unshift({ x: sx, z: sz, age: 0, w: this.beam * 0.55 });
+      this.pts.unshift({ x: sx, z: sz, age: 0, w: this.beam * 0.32 });
       if (this.pts.length > this.max) this.pts.length = this.max;
     }
     const n = this.pts.length;
@@ -93,7 +99,13 @@ export class WakeTrail {
     for (let i = 0; i < this.max; i++) {
       const p = this.pts[Math.min(i, n - 1)];
       if (!p) {
-        this.pos.fill(0);
+        // no trail yet: collapse every vertex onto the stern instead of the world origin
+        for (let k = 0; k < this.max * 2; k++) {
+          this.pos[k * 3] = sx;
+          this.pos[k * 3 + 1] = -5;
+          this.pos[k * 3 + 2] = sz;
+          this.age[k] = 1;
+        }
         break;
       }
       const q = this.pts[Math.min(i + 1, n - 1)] ?? p;
@@ -109,12 +121,19 @@ export class WakeTrail {
         dz /= l;
       }
       const w = i < n ? p.w : 0;
-      this.pos[i * 6] = p.x - dz * w;
-      this.pos[i * 6 + 1] = 0.25;
-      this.pos[i * 6 + 2] = p.z + dx * w;
-      this.pos[i * 6 + 3] = p.x + dz * w;
-      this.pos[i * 6 + 4] = 0.25;
-      this.pos[i * 6 + 5] = p.z - dx * w;
+      const ax = p.x - dz * w;
+      const az = p.z + dx * w;
+      const bx = p.x + dz * w;
+      const bz = p.z - dx * w;
+      // follow the swell so the foam never floats above or sinks below the surface
+      const ya = waves ? waves.sample(ax, az, tmpW).h + 0.12 : 0.25;
+      const yb = waves ? waves.sample(bx, bz, tmpW).h + 0.12 : 0.25;
+      this.pos[i * 6] = ax;
+      this.pos[i * 6 + 1] = ya;
+      this.pos[i * 6 + 2] = az;
+      this.pos[i * 6 + 3] = bx;
+      this.pos[i * 6 + 4] = yb;
+      this.pos[i * 6 + 5] = bz;
       const a = i < n ? Math.min(1, p.age + (1 - intensity) * 0.6) : 1;
       this.age[i * 2] = a;
       this.age[i * 2 + 1] = a;
@@ -129,10 +148,104 @@ export class WakeTrail {
 
 const tmp = { h: 0, nx: 0, nz: 0 };
 
+let foamMat: THREE.ShaderMaterial | null = null;
+/** Foam collar hugging the hull at the waterline, with a bow wave that grows with speed. */
+export class HullFoam {
+  mesh: THREE.Mesh;
+  private geo = new THREE.BufferGeometry();
+  private pos: Float32Array;
+  private outline: { x: number; z: number; bow: number }[];
+  constructor(type: string, faction: string) {
+    this.outline = waterlineOutline(type, faction);
+    const n = this.outline.length;
+    this.pos = new Float32Array(n * 2 * 3);
+    const side = new Float32Array(n * 2);
+    const bow = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      side[i * 2] = 0;
+      side[i * 2 + 1] = 1;
+      bow[i * 2] = this.outline[i].bow;
+      bow[i * 2 + 1] = this.outline[i].bow;
+    }
+    const idx: number[] = [];
+    for (let i = 0; i < n - 1; i++) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+    idx.push((n - 1) * 2, (n - 1) * 2 + 1, 0, (n - 1) * 2 + 1, 1, 0);
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+    this.geo.setAttribute('aBow', new THREE.BufferAttribute(bow, 1));
+    this.geo.setIndex(idx);
+    if (!foamMat)
+      foamMat = new THREE.ShaderMaterial({
+        uniforms: { uNoise: { value: noiseTexture() }, uTime: { value: 0 }, uLight: { value: 1 }, uSpeed: { value: 0 } },
+        vertexShader: /* glsl */ `
+          attribute float aSide; attribute float aBow;
+          varying float vSide; varying float vBow; varying vec3 vW;
+          void main(){ vSide = aSide; vBow = aBow; vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D uNoise; uniform float uTime; uniform float uLight; uniform float uSpeed;
+          varying float vSide; varying float vBow; varying vec3 vW;
+          void main(){
+            float n = texture2D(uNoise, vW.xz * 0.32 + uTime * 0.03).r;
+            float n2 = texture2D(uNoise, vW.xz * 0.9 - uTime * 0.05).g;
+            float froth = smoothstep(0.3, 0.62, n * 0.6 + n2 * 0.4);
+            float near = 1.0 - smoothstep(0.1, 1.0, vSide);
+            float a = near * (0.35 + froth * 0.65) * (0.55 + vBow * 0.45 * min(1.0, uSpeed / 3.0));
+            gl_FragColor = vec4(vec3(0.93, 0.96, 0.98) * uLight, clamp(a, 0.0, 1.0) * 0.85);
+          }`,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -8,
+      });
+    this.mesh = new THREE.Mesh(this.geo, foamMat);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 3;
+  }
+  static updateShared(time: number, light: number) {
+    if (foamMat) {
+      foamMat.uniforms.uTime.value = time;
+      foamMat.uniforms.uLight.value = light;
+    }
+  }
+  update(x: number, z: number, heading: number, speed: number, scale: number, waves: WaveSampler, sinking: number) {
+    const c = Math.cos(heading);
+    const s = Math.sin(heading);
+    const n = this.outline.length;
+    const cx = this.outline.reduce((a, p) => a + p.z, 0) / n;
+    this.mesh.visible = sinking < 0.3;
+    for (let i = 0; i < n; i++) {
+      const o = this.outline[i];
+      // push the outer edge out further at the bow as speed builds
+      const grow = 1.4 + o.bow * Math.min(3.5, speed * 0.7);
+      const lx = o.x * scale;
+      const lz = o.z * scale;
+      const ox = (o.x + Math.sign(o.x || 1) * grow) * scale;
+      const oz = (o.z + (o.z > cx ? o.bow * grow * 0.8 : -0.4)) * scale;
+      const ax = x + lx * c + lz * s;
+      const az = z - lx * s + lz * c;
+      const bx = x + ox * c + oz * s;
+      const bz = z - ox * s + oz * c;
+      this.pos[i * 6] = ax;
+      this.pos[i * 6 + 1] = waves.sample(ax, az, tmp).h + 0.3;
+      this.pos[i * 6 + 2] = az;
+      this.pos[i * 6 + 3] = bx;
+      this.pos[i * 6 + 4] = waves.sample(bx, bz, tmp).h + 0.3;
+      this.pos[i * 6 + 5] = bz;
+    }
+    (this.geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    (this.mesh.material as THREE.ShaderMaterial).uniforms.uSpeed.value = speed;
+  }
+  dispose() {
+    this.geo.dispose();
+  }
+}
+
 /** A ship floating on the ocean: buoyancy (pitch/roll/heave), wake, sails reacting to wind and speed. */
 export class ShipActor {
   model: ShipModel;
   wake: WakeTrail;
+  foam: HullFoam;
   group = new THREE.Group();
   x = 0;
   z = 0;
@@ -148,14 +261,18 @@ export class ShipActor {
     this.model = buildShip(type, faction);
     this.group.add(this.model.root);
     this.wake = new WakeTrail(this.model.params.beam);
+    this.foam = new HullFoam(type, faction);
   }
   addTo(scene: THREE.Object3D) {
+    this.group.traverse((o) => o.layers.enable(1));
     scene.add(this.group);
     scene.add(this.wake.mesh);
+    scene.add(this.foam.mesh);
   }
   removeFrom(scene: THREE.Object3D) {
     scene.remove(this.group);
     scene.remove(this.wake.mesh);
+    scene.remove(this.foam.mesh);
   }
   update(dt: number, waves: WaveSampler, windDir: number, windStrength: number) {
     const L = this.model.length * this.scale;
@@ -199,7 +316,8 @@ export class ShipActor {
     }
     const sternX = this.x - sh * L * 0.45;
     const sternZ = this.z - ch * L * 0.45;
-    this.wake.update(dt, sternX, sternZ, this.heading, this.sinking > 0 ? 0 : this.speed);
+    this.wake.update(dt, sternX, sternZ, this.heading, this.sinking > 0 ? 0 : this.speed, waves);
+    this.foam.update(this.x, this.z, this.heading, this.speed, this.scale, waves, this.sinking);
   }
   turnRate = 0;
   setLampVisible(v: boolean) {
@@ -207,6 +325,7 @@ export class ShipActor {
   }
   dispose() {
     this.wake.dispose();
+    this.foam.dispose();
     for (const s of this.model.sails) s.dispose();
   }
 }

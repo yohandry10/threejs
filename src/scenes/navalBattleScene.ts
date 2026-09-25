@@ -83,6 +83,7 @@ export class NavalBattleScene implements GameScene {
     sun.shadow.bias = -0.0005;
     this.ocean = new Ocean(this.env.uniforms, null, new THREE.Vector2(1, 1), app.settings.water);
     this.scene.add(this.ocean.mesh);
+    this.ocean.enableReflection(this.scene);
     const bounds = new THREE.Box2(new THREE.Vector2(-SEA_R, -SEA_R), new THREE.Vector2(SEA_R, SEA_R));
     this.cam = new StrategyCamera(window.innerWidth / window.innerHeight, bounds, () => 0, app.settings.keys);
     this.cam.minDist = 30;

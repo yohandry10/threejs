@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const [,, q, js] = process.argv;
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--use-gl=angle'] });
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+const logs = [];
+page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
+page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
+await page.goto(`http://localhost:4173/?viewer=ship&hq=1&${q}`);
+await page.waitForTimeout(12000);
+console.log(await page.evaluate(js));
+console.log([...new Set(logs)].slice(0, 20).join('\n'));
+await browser.close();

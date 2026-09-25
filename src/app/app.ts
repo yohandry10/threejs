@@ -46,6 +46,8 @@ export class App {
     public uiRoot: HTMLElement,
   ) {
     this.settings = loadSettings();
+    // QA override (?hq=1): force the high quality preset regardless of detected hardware
+    if (new URLSearchParams(location.search).get('hq')) this.settings = { ...this.settings, shadows: 2, water: 1, vegetation: 1, particles: 1, postprocessing: true, bloom: true, antialias: true, resolutionScale: 1 };
     this.host = new RendererHost(canvas, this.settings);
     this.audio = new AudioManager(this.settings);
     window.addEventListener('resize', () => {
@@ -91,6 +93,14 @@ export class App {
     this.loading = { progress: 0, label: 'Preparing the realm' };
     this.notify();
     this.loop();
+    const vparams = new URLSearchParams(location.search);
+    if (vparams.get('viewer')) {
+      const { ViewerScene } = await import('../scenes/viewerScene');
+      this.setScene(new ViewerScene(vparams));
+      this.state = 'menu';
+      this.uiRoot.style.display = 'none';
+      return;
+    }
     this.menuScene = new MenuScene();
     this.setScene(this.menuScene);
     this.geo = await loadWorld((p, l) => {
