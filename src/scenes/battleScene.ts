@@ -58,7 +58,7 @@ export class BattleScene implements GameScene {
     const cz = mine.length ? mine.reduce((a, u) => a + u.cz, 0) / mine.length : 0;
     const yaw = this.side === 0 ? 0 : Math.PI;
     this.view.cam.yaw = this.view.cam.goalYaw = yaw;
-    this.view.cam.focus(cx, cz + (this.side === 0 ? -40 : 40), 230, true);
+    this.view.cam.focus(cx, cz + (this.side === 0 ? -30 : 30), 150, true);
     this.bindInput();
     if (!mine.length) this.begin();
   }

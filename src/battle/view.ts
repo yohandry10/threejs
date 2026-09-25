@@ -340,7 +340,7 @@ export class BattleView {
     this.env = new Environment(scene);
     this.env.t = timeOfDay;
     this.env.paused = true;
-    this.env.baseFogDensity = 0.0006;
+    this.env.baseFogDensity = 0.00011;
     this.env.setWeather(weather as never, season, true);
     const sun = this.env.sun;
     sun.castShadow = settings.shadows > 0;
@@ -421,13 +421,13 @@ export class BattleView {
     const n2 = new Noise2D(f.setup.seed + 5);
     const snow = f.snowy;
     const arid = f.arid;
-    const grass = snow ? [0.82, 0.84, 0.88] : arid ? [0.6, 0.52, 0.36] : season === 0 ? [0.27, 0.4, 0.15] : season === 1 ? [0.36, 0.41, 0.17] : season === 2 ? [0.44, 0.37, 0.18] : [0.34, 0.33, 0.2];
-    const grass2 = snow ? [0.7, 0.74, 0.8] : arid ? [0.52, 0.43, 0.28] : season === 2 ? [0.5, 0.33, 0.14] : [0.22, 0.33, 0.12];
-    const dirt = [0.36, 0.29, 0.2];
+    const grass = snow ? [0.82, 0.84, 0.88] : arid ? [0.62, 0.55, 0.4] : season === 0 ? [0.42, 0.47, 0.29] : season === 1 ? [0.47, 0.49, 0.27] : season === 2 ? [0.53, 0.46, 0.27] : [0.46, 0.45, 0.34];
+    const grass2 = snow ? [0.7, 0.74, 0.8] : arid ? [0.54, 0.46, 0.32] : season === 2 ? [0.52, 0.38, 0.2] : [0.33, 0.4, 0.21];
+    const dirt = [0.47, 0.39, 0.29];
     const rock = [0.43, 0.41, 0.38];
     const mud = [0.28, 0.23, 0.16];
     const cobble = [0.46, 0.43, 0.39];
-    const forestC = snow ? [0.6, 0.64, 0.66] : [0.17, 0.21, 0.1];
+    const forestC = snow ? [0.6, 0.64, 0.66] : [0.25, 0.28, 0.16];
     const road = [0.5, 0.42, 0.3];
     const fort = f.fort;
     for (let j = 0; j < T; j++)
@@ -465,7 +465,7 @@ export class BattleView {
           const rz = x * 0.25 + 30 * Math.sin(x / 120);
           if (Math.abs(z - rz) < 3.5) mix(road, 0.7);
         }
-        const k = 0.9 + n2.noise(x / 3, z / 3) * 0.1;
+        const k = (0.9 + n2.noise(x / 3, z / 3) * 0.1) * 1.18;
         const o = (j * T + i) * 4;
         data[o] = clamp(r * k * 255, 0, 255);
         data[o + 1] = clamp(g * k * 255, 0, 255);
@@ -517,6 +517,7 @@ export class BattleView {
     vegUniforms.uAutumn.value = season === 2 && !f.snowy ? 1 : 0;
     const density = Math.max(0.3, this.settings.vegetation);
     const r = new Rng(f.setup.seed + 17);
+    const grass2Col = f.arid ? [0.58, 0.5, 0.34] : season === 2 ? [0.55, 0.44, 0.24] : [0.38, 0.46, 0.22];
     for (let kind = 0; kind < 6; kind++) {
       const list = kind === 5 ? f.rocks.map((q) => ({ ...q, kind: 5 })) : f.trees.filter((t) => t.kind === kind && (Math.abs(t.x) > PLAY || Math.abs(t.z) > PLAY || r.chance(density)));
       if (!list.length) continue;
@@ -545,12 +546,12 @@ export class BattleView {
         const dz = Math.sin(a) * 0.22;
         const lean = (k % 2 ? 0.08 : -0.08) * 1;
         verts.push(-dx, 0, -dz, dx, 0, dz, lean, 0.55 + (k % 3) * 0.1, 0);
-        cols.push(0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1.25, 1.25, 1.1);
+        cols.push(0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 1.0, 1.0, 0.95);
       }
       tuft.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
       tuft.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
       tuft.computeVertexNormals();
-      const gc = f.arid ? new THREE.Color(0.62, 0.55, 0.36) : season === 2 ? new THREE.Color(0.55, 0.45, 0.22) : new THREE.Color(0.33, 0.45, 0.16);
+      const gc = new THREE.Color(grass2Col[0], grass2Col[1], grass2Col[2]).convertSRGBToLinear().multiplyScalar(1.05);
       const gm = new THREE.MeshStandardMaterial({ color: gc, vertexColors: true, side: THREE.DoubleSide, roughness: 1 });
       const count = Math.floor(26000 * density);
       const im = new THREE.InstancedMesh(tuft, gm, count);
@@ -562,8 +563,8 @@ export class BattleView {
         if (f.waterDepth(x, z) > 0 || f.slopeAt(x, z) > 0.5) continue;
         const y = f.heightAt(x, z);
         tmpQ.setFromAxisAngle(UP, r.next() * 6.28);
-        const s = r.range(0.7, 1.5);
-        tmpM.compose(tmpP.set(x, y, z), tmpQ, tmpS.set(s, s * r.range(0.8, 1.3), s));
+        const s = r.range(0.5, 1.1);
+        tmpM.compose(tmpP.set(x, y, z), tmpQ, tmpS.set(s, s * r.range(0.7, 1.2), s));
         im.setMatrixAt(n++, tmpM);
       }
       im.count = n;

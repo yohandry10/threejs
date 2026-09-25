@@ -11,7 +11,7 @@ import { serialize, migrate, SaveError } from '../sim/save';
 import { readSave, writeSave, listSaves, type SaveMeta } from '../persistence/storage';
 import { initFog } from '../sim/fog';
 import { EventBus } from '../core/eventBus';
-import type { BattleSetup, BattleOutcome } from '../sim/battles';
+import { makeFieldBattle, makeNavalBattle, makeSettlementBattle, type BattleSetup, type BattleOutcome } from '../sim/battles';
 import { UIState } from '../ui/uiState';
 import { renderUI } from '../ui/root';
 import { AudioManager } from '../audio/audio';
@@ -102,7 +102,44 @@ export class App {
     this.audio.setMood('menu');
     this.notify();
     const params = new URLSearchParams(location.search);
-    if (params.get('quickstart')) await this.newGame(params.get('quickstart') || 'aldmere', 7, false);
+    if (params.get('quickstart')) {
+      await this.newGame(params.get('quickstart') || 'aldmere', 7, false);
+      const kind = params.get('battle');
+      if (kind) this.debugBattle(kind);
+    }
+  }
+
+  /** QA helper (?quickstart=faction&battle=field|siege|naval): jump straight into a tactical battle. */
+  debugBattle(kind: string) {
+    const cs = this.campaign;
+    if (!cs) return;
+    const sim = cs.sim;
+    const me = sim.s.player;
+    const mine = Object.values(sim.s.armies).filter((a) => a.faction === me).sort((a, b) => b.units.length - a.units.length)[0];
+    let setup: BattleSetup | null = null;
+    if (kind === 'naval') {
+      const myF = Object.values(sim.s.fleets).find((f) => f.faction === me);
+      const foe = Object.values(sim.s.fleets).find((f) => f.faction !== me);
+      if (myF && foe) setup = makeNavalBattle(sim, myF, foe);
+    } else if (kind === 'siege' && mine) {
+      const p = Object.values(sim.s.provinces).filter((p) => p.owner !== me && p.settlement.walls > 0).sort((a, b) => b.settlement.walls - a.settlement.walls)[0];
+      if (p) setup = makeSettlementBattle(sim, mine, p.id);
+    } else if (mine) {
+      const foe = Object.values(sim.s.armies).filter((a) => a.faction !== me && !a.isRebel).sort((a, b) => b.units.length - a.units.length)[0];
+      if (foe) {
+        setup = makeFieldBattle(sim, mine, foe);
+        setup.kind = 'field';
+        setup.defender.garrisonOf = undefined;
+        setup.settlement = false;
+        const t = new URLSearchParams(location.search).get('terrain');
+        if (t) setup.terrain = t as never;
+        if (new URLSearchParams(location.search).get('river')) setup.river = true;
+      }
+    }
+    if (setup) {
+      cs.startBattlePrompt(setup, true);
+      cs.pendingBattle?.resolve('manual');
+    }
   }
 
   setScene(s: GameScene) {

@@ -66,7 +66,7 @@ function LandMarkers(props: { b: BattleScene }) {
         el.classList.toggle('sel', sel);
         el.classList.toggle('rout', u.state === 'routing');
         el.classList.toggle('waver', u.state === 'wavering');
-        const bar = el.firstElementChild!.firstElementChild as HTMLDivElement;
+        const bar = el.querySelector('.ubar > div') as HTMLDivElement;
         bar.style.width = `${Math.max(0, Math.min(100, u.morale))}%`;
         const txt = `${u.isGeneral ? '♛ ' : ''}${u.state === 'routing' ? '⚑ ' : ''}${Math.round(u.alive * u.menPer)}`;
         if (el.dataset.t !== txt) {
