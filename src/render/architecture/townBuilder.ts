@@ -69,7 +69,7 @@ export function townMaterials(): Record<BK, THREE.Material> {
     cobble: new THREE.MeshStandardMaterial({ map: cob, bumpMap: cob, bumpScale: 1.0, vertexColors: true, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
     cloth: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }),
     leaf: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }),
-    glass: lampify(new THREE.MeshStandardMaterial({ color: 0x2a2030, emissive: new THREE.Color(1, 0.62, 0.3), vertexColors: true, roughness: 0.3 }), 1.6, 'town-glass'),
+    glass: lampify(new THREE.MeshStandardMaterial({ color: 0x5a6478, emissive: new THREE.Color(1, 0.62, 0.3), vertexColors: true, roughness: 0.12, metalness: 0.55 }), 1.6, 'town-glass'),
   };
   return mats;
 }
@@ -1068,7 +1068,7 @@ function house(hi: Buckets, lo: Buckets, x: number, z: number, y: number, yaw: n
 function church(hi: Buckets, lo: Buckets, x: number, z: number, y: number, yaw: number, s: number, stoneC: THREE.Color, roofC: THREE.Color, flagsAt: { pos: THREE.Vector3; size: number }[], lamps: THREE.Vector3[]) {
   const f = fr(x, z, yaw);
   const pale = stoneC.clone().lerp(new THREE.Color(0.86, 0.82, 0.74), 0.5);
-  const slate = new THREE.Color(0.42, 0.44, 0.5);
+  const slate = new THREE.Color(0.3, 0.31, 0.34);
   const w = 11 * s;
   const d = 28 * s;
   const h = 13 * s;

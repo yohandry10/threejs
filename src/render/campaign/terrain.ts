@@ -119,7 +119,7 @@ vec3 fieldColor(vec2 p, float n) {
   vec3 pale = vec3(0.32, 0.36, 0.15);
   vec3 c = h < 0.32 ? wheat : h < 0.55 ? green : h < 0.75 ? plough : pale;
   // seasons: spring green, summer mixed, autumn golden stubble, winter bare
-  c = mix(c, vec3(0.3, 0.42, 0.15), uSpring * 0.55 * step(0.3, h));
+  c = mix(c, vec3(0.15, 0.23, 0.07), uSpring * 0.45 * step(0.3, h));
   c = mix(c, mix(vec3(0.6, 0.48, 0.24), plough, step(0.55, h)), uAutumn * 0.6);
   c = mix(c, vec3(0.36, 0.3, 0.22), uWinter * 0.7);
   float fur = sin(f.x * 6.2831 * (7.0 + floor(h * 5.0))) * 0.5 + 0.5;
@@ -138,14 +138,14 @@ vec3 gardenColor(vec2 p, float n) {
   vec2 cell = floor(q);
   vec2 f = fract(q);
   float h = thash(cell);
-  vec3 soil = mix(vec3(0.24, 0.17, 0.11), vec3(0.3, 0.22, 0.14), n);
-  vec3 veg = mix(vec3(0.16, 0.28, 0.08), vec3(0.27, 0.38, 0.12), thash(cell + 5.0));
+  vec3 soil = mix(vec3(0.14, 0.1, 0.065), vec3(0.19, 0.14, 0.09), n);
+  vec3 veg = mix(vec3(0.08, 0.15, 0.04), vec3(0.15, 0.22, 0.06), thash(cell + 5.0));
   float rows = sin(f.x * 6.2831 * (4.0 + floor(h * 4.0))) * 0.5 + 0.5;
-  vec3 c = h < 0.38 ? mix(soil, veg, smoothstep(0.35, 0.75, rows)) : h < 0.58 ? veg * (0.85 + 0.25 * rows) : h < 0.72 ? soil * (0.88 + 0.2 * rows) : mix(vec3(0.24, 0.34, 0.12), vec3(0.3, 0.38, 0.15), n);
+  vec3 c = h < 0.38 ? mix(soil, veg, smoothstep(0.35, 0.75, rows)) : h < 0.58 ? veg * (0.85 + 0.25 * rows) : h < 0.72 ? soil * (0.88 + 0.2 * rows) : mix(vec3(0.1, 0.16, 0.05), vec3(0.15, 0.2, 0.07), n);
   c = mix(c, vec3(0.42, 0.34, 0.16), uAutumn * 0.35);
   c = mix(c, vec3(0.36, 0.33, 0.28), uWinter * 0.6);
   float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
-  return mix(vec3(0.3, 0.25, 0.17), c, smoothstep(0.03, 0.09, edge));
+  return mix(vec3(0.19, 0.16, 0.11), c, smoothstep(0.03, 0.09, edge));
 }
 
 vec3 terrainAlbedo(vec3 wp, vec3 nw, out float rough, out float snowOut) {
@@ -167,7 +167,7 @@ vec3 terrainAlbedo(vec3 wp, vec3 nw, out float rough, out float snowOut) {
   grass *= 0.9 + 0.2 * texture2D(tNoise, wp.xz * 0.37).r;
   grass = mix(grass, vec3(0.5, 0.4, 0.16), uAutumn * 0.45);
   grass = mix(grass, vec3(0.34, 0.33, 0.24), uWinter * 0.5);
-  grass = mix(grass, vec3(0.22, 0.36, 0.1), uSpring * 0.3);
+  grass = mix(grass, vec3(0.1, 0.17, 0.05), uSpring * 0.3);
   vec3 dry = mix(vec3(0.55, 0.47, 0.26), vec3(0.64, 0.56, 0.33), n2);
   // rock: warm/cool mineral variation, strata bands, pale scree on gentler slopes, dark clefts
   vec3 rock = mix(vec3(0.2, 0.19, 0.18), vec3(0.36, 0.34, 0.31), n2);
@@ -209,7 +209,7 @@ vec3 terrainAlbedo(vec3 wp, vec3 nw, out float rough, out float snowOut) {
     float tn = texture2D(tNoise, wp.xz * 0.11).r;
     float g = smoothstep(0.25, 0.7, town.g + (tn - 0.5) * 0.35);
     float e = smoothstep(0.08, 0.5, town.r + (tn - 0.5) * 0.25);
-    vec3 dirt = mix(vec3(0.3, 0.25, 0.18), vec3(0.4, 0.34, 0.25), n3) * (0.9 + 0.2 * n4);
+    vec3 dirt = mix(vec3(0.17, 0.14, 0.1), vec3(0.25, 0.21, 0.15), n3) * (0.9 + 0.2 * n4);
     dirt = mix(dirt, vec3(0.34, 0.33, 0.3), uWinter * 0.5);
     col = mix(col, gardenColor(wp.xz, n2), g * (1.0 - e) * 0.92);
     col = mix(col, dirt, e * 0.95);

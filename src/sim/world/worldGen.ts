@@ -197,6 +197,14 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       }
       dense.push(spline[spline.length - 1]);
     }
+    // a river ends where it first reaches the sea (a course drawn across a strait would otherwise
+    // lay a ribbon of river water over open sea)
+    for (let i = 5; i < dense.length - 3; i++) {
+      if (hAt(dense[i][0], dense[i][1]) < -0.3 && hAt(dense[i + 1][0], dense[i + 1][1]) < -0.3 && hAt(dense[i + 2][0], dense[i + 2][1]) < -0.3) {
+        dense.length = i;
+        break;
+      }
+    }
     // carry the course on until it actually meets the sea, so every mouth opens into open water
     {
       const [lx, lz] = dense[dense.length - 1];
