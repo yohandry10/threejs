@@ -12,6 +12,8 @@ uniform vec3 uLightColor;
 uniform vec3 uAmbient;
 uniform sampler2D tFog;
 uniform vec2 uWorldSize;
+uniform vec3 uMistColor;
+varying float vFade;
 varying vec2 vUv;
 varying vec3 vWorld;
 #include <fog_pars_fragment>
@@ -28,21 +30,24 @@ void main() {
   vec3 col = mix(body, refl * 0.7, clamp(fres * 0.7 + 0.08, 0.0, 0.85));
   col += uSunColor * pow(max(dot(R, uSunDir), 0.0), 300.0) * 3.0 * (1.0 - uNight);
   float edge = 1.0 - abs(vUv.x * 2.0 - 1.0);
-  float a = smoothstep(0.0, 0.35, edge);
-  vec2 fg = texture2D(tFog, vWorld.xz / uWorldSize).rg;
-  col = mix(col, vec3(dot(col, vec3(0.33))) * 0.6, (1.0 - fg.g) * 0.6);
-  col = mix(col, vec3(0.15, 0.135, 0.11), (1.0 - fg.r) * 0.94);
-  gl_FragColor = vec4(col, a * 0.92);
+  float a = smoothstep(0.0, 0.16, edge);
+  vec2 fg = smoothstep(vec2(0.3), vec2(0.7), texture2D(tFog, vWorld.xz / uWorldSize).rg);
+  col = mix(col, vec3(dot(col, vec3(0.33))) * 0.6, (1.0 - fg.g) * 0.55);
+  col = mix(col, uMistColor, (1.0 - fg.r) * 0.96);
+  gl_FragColor = vec4(col, a * 0.97 * vFade);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`;
 const riverVert = /* glsl */ `
+attribute float aFade;
+varying float vFade;
 varying vec2 vUv;
 varying vec3 vWorld;
 #include <fog_pars_vertex>
 void main() {
   vUv = uv;
+  vFade = aFade;
   vec4 w = modelMatrix * vec4(position, 1.0);
   vWorld = w.xyz;
   vec4 mvPosition = viewMatrix * w;
@@ -57,7 +62,7 @@ export class Waterways {
   bridgeMat: THREE.MeshStandardMaterial;
   constructor(g: WorldGeo, sky: SkyUniforms, fogTex: THREE.Texture) {
     this.riverMat = new THREE.ShaderMaterial({
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uNormalTex: { value: null }, uLightColor: { value: new THREE.Color() }, uAmbient: { value: new THREE.Color() }, tFog: { value: null }, uWorldSize: { value: new THREE.Vector2(g.W, g.H) } }]),
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uNormalTex: { value: null }, uLightColor: { value: new THREE.Color() }, uAmbient: { value: new THREE.Color() }, tFog: { value: null }, uWorldSize: { value: new THREE.Vector2(g.W, g.H) }, uMistColor: { value: new THREE.Color(0.3, 0.32, 0.35) } }]),
       vertexShader: riverVert,
       fragmentShader: riverFrag,
       transparent: true,
@@ -74,6 +79,7 @@ export class Waterways {
       const n = r.widths.length;
       const pos: number[] = [];
       const uv: number[] = [];
+      const fade: number[] = [];
       const idx: number[] = [];
       let along = 0;
       for (let i = 0; i < n; i++) {
@@ -86,11 +92,14 @@ export class Waterways {
         const l = Math.hypot(tx, tz) || 1;
         tx /= l;
         tz /= l;
-        const w = (r.widths[i] * 0.5 + 3) * 0.95;
+        const w = r.widths[i] * 0.5 * 1.3 + 5;
         const y = r.levels[i] - 0.2;
         if (i > 0) along += Math.hypot(x - r.pts[(i - 1) * 2], z - r.pts[(i - 1) * 2 + 1]);
         pos.push(x - tz * w, y, z + tx * w, x + tz * w, y, z - tx * w);
         uv.push(0, along / 10, 1, along / 10);
+        const mouth = r.mouth ?? n - 1;
+        const f = 1 - Math.min(1, Math.max(0, (i - (mouth - 4)) / 6));
+        fade.push(f, f);
         if (i < n - 1) {
           const a = i * 2;
           idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
@@ -99,6 +108,7 @@ export class Waterways {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geo.setAttribute('aFade', new THREE.Float32BufferAttribute(fade, 1));
       geo.setIndex(idx);
       geo.computeBoundingSphere();
       const m = new THREE.Mesh(geo, this.riverMat);
@@ -108,25 +118,7 @@ export class Waterways {
     // roads
     this.roadMat = new THREE.MeshStandardMaterial({ map: roadTexture(), transparent: true, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     const roadGeos: THREE.BufferGeometry[] = [];
-    for (const rd of g.roads) {
-      const pts = rd.pts;
-      const n = pts.length / 2;
-      // resample every ~5 units
-      const sx: number[] = [];
-      const sz: number[] = [];
-      for (let i = 0; i < n - 1; i++) {
-        const ax = pts[i * 2];
-        const az = pts[i * 2 + 1];
-        const bx = pts[i * 2 + 2];
-        const bz = pts[i * 2 + 3];
-        const segs = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 5));
-        for (let s = 0; s < segs; s++) {
-          sx.push(ax + ((bx - ax) * s) / segs);
-          sz.push(az + ((bz - az) * s) / segs);
-        }
-      }
-      sx.push(pts[(n - 1) * 2]);
-      sz.push(pts[(n - 1) * 2 + 1]);
+    const ribbon = (sx: number[], sz: number[]) => {
       const pos: number[] = [];
       const uv: number[] = [];
       const idx: number[] = [];
@@ -157,7 +149,51 @@ export class Waterways {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       geo.setIndex(idx);
-      roadGeos.push(geo);
+      return geo;
+    };
+    const shortBridges = g.bridges.filter((b) => b.length <= 110);
+    const onBridge = (x: number, z: number) =>
+      shortBridges.some((b) => {
+        const dx = x - b.x;
+        const dz = z - b.z;
+        const along = dx * Math.cos(b.angle) + dz * Math.sin(b.angle);
+        const across = -dx * Math.sin(b.angle) + dz * Math.cos(b.angle);
+        return Math.abs(along) < b.length / 2 + 8 && Math.abs(across) < 10;
+      });
+    for (const rd of g.roads) {
+      const pts = rd.pts;
+      const n = pts.length / 2;
+      // resample every ~5 units
+      const sx: number[] = [];
+      const sz: number[] = [];
+      for (let i = 0; i < n - 1; i++) {
+        const ax = pts[i * 2];
+        const az = pts[i * 2 + 1];
+        const bx = pts[i * 2 + 2];
+        const bz = pts[i * 2 + 3];
+        const segs = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 5));
+        for (let s = 0; s < segs; s++) {
+          sx.push(ax + ((bx - ax) * s) / segs);
+          sz.push(az + ((bz - az) * s) / segs);
+        }
+      }
+      sx.push(pts[(n - 1) * 2]);
+      sz.push(pts[(n - 1) * 2 + 1]);
+      // split into runs over land: crossings of open water are ferry links, not causeways
+      let cx: number[] = [];
+      let cz: number[] = [];
+      for (let i = 0; i < sx.length; i++) {
+        const wet = heightAt(g, sx[i], sz[i]) < -0.8 && !onBridge(sx[i], sz[i]);
+        if (wet) {
+          if (cx.length > 1) roadGeos.push(ribbon(cx, cz));
+          cx = [];
+          cz = [];
+        } else {
+          cx.push(sx[i]);
+          cz.push(sz[i]);
+        }
+      }
+      if (cx.length > 1) roadGeos.push(ribbon(cx, cz));
     }
     if (roadGeos.length) {
       const merged = mergeGeometries(roadGeos)!;
@@ -172,6 +208,7 @@ export class Waterways {
     this.bridgeMat = new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.9, color: 0xc8bba4 });
     const bparts: THREE.BufferGeometry[] = [];
     for (const b of g.bridges) {
+      if (b.length > 110) continue;
       const local: THREE.BufferGeometry[] = [];
       const L = b.length + 12;
       const deck = new THREE.BoxGeometry(L, 1.6, 9);

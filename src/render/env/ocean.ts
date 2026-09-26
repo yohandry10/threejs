@@ -86,7 +86,9 @@ void main() {
     vec2 d = normalize(w.xy);
     float k = 6.2831853 / w.w;
     float c = sqrt(9.8 / k) * 0.55;
-    float steep = w.z * amp;
+    // fade each wave out before the grid (spacing ~5% of the radius) can no longer sample it:
+    // undersampled short waves alias into long bright streaks at strategy distances
+    float steep = w.z * amp * (1.0 - smoothstep(4.0 * w.w, 8.0 * w.w, dist));
     float a = steep / k;
     float f = k * (dot(d, p.xz) - c * uTime);
     float sf = sin(f);
@@ -111,6 +113,7 @@ const frag = /* glsl */ `
 ${SKY_GLSL}
 uniform float uTime;
 uniform float uWaveScale;
+uniform float uNormalStrength;
 uniform sampler2D uNormalTex;
 uniform sampler2D uNoise;
 uniform vec3 uLightColor;
@@ -118,8 +121,14 @@ uniform vec3 uAmbient;
 uniform float uFoamAmount;
 uniform float uLightning;
 uniform sampler2D tFogW;
+uniform sampler2D tSeaMask;
+uniform vec2 uFogSize;
+uniform vec3 uMistColor;
 uniform float uFogW;
 uniform vec2 uWorldSizeF;
+uniform sampler2D uHeight;
+uniform vec2 uWorldSize;
+uniform float uHasHeight;
 uniform sampler2D tReflect;
 uniform float uUseRefl;
 varying vec4 vReflCoord;
@@ -139,7 +148,7 @@ void main() {
   vec3 n2 = texture2D(uNormalTex, uv2).xyz * 2.0 - 1.0;
   vec3 n3 = texture2D(uNormalTex, uv3).xyz * 2.0 - 1.0;
   float detailFade = 1.0 - smoothstep(200.0, 3500.0, dist);
-  vec2 pert = (n1.xy * 0.5 + n2.xy * 0.6 + n3.xy * 0.3 * (1.0 - smoothstep(20.0, 300.0, dist))) * (0.12 + 0.1 * uWaveScale) * detailFade;
+  vec2 pert = (n1.xy * 0.5 + n2.xy * 0.6 + n3.xy * 0.3 * (1.0 - smoothstep(20.0, 300.0, dist))) * (0.12 + 0.1 * uWaveScale) * detailFade * uNormalStrength;
   vec3 N = normalize(vNormalW + vec3(pert.x, 0.0, pert.y));
   float NdV = max(dot(N, V), 0.0);
   float fresnel = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
@@ -148,8 +157,13 @@ void main() {
   R.y = abs(R.y);
   vec3 refl = skyBase(R);
   // body colour
+  // per-pixel sea depth from the terrain heightmap: smooth coastlines and shore foam
   float depth = vDepth;
-  vec3 deep = vec3(0.008, 0.04, 0.07);
+  if (uHasHeight > 0.5) {
+    vec2 huv = vWorld.xz / uWorldSize;
+    depth = (huv.x < 0.0 || huv.y < 0.0 || huv.x > 1.0 || huv.y > 1.0) ? 200.0 : -texture2D(uHeight, huv).r;
+  }
+  vec3 deep = vec3(0.012, 0.058, 0.1);
   vec3 mid = vec3(0.02, 0.13, 0.16);
   vec3 shallow = vec3(0.07, 0.30, 0.30);
   vec3 body = mix(shallow, mid, smoothstep(0.5, 8.0, depth));
@@ -179,7 +193,7 @@ void main() {
   // foam: whitecaps + shoreline
   float n = texture2D(uNoise, vWorld.xz * 0.03 + uTime * 0.01).r;
   float n2f = texture2D(uNoise, vWorld.xz * 0.11 - uTime * 0.02).g;
-  float whitecap = smoothstep(0.75, 1.05, vCrest * (0.6 + uWaveScale * 0.4) + n * 0.3) * smoothstep(0.9, 1.6, uWaveScale + n * 0.5) * uFoamAmount * (1.0 - smoothstep(600.0, 3000.0, dist));
+  float whitecap = smoothstep(0.75, 1.05, vCrest * (0.6 + uWaveScale * 0.4) + n * 0.3) * smoothstep(1.2, 1.9, uWaveScale + n * 0.35) * uFoamAmount * (1.0 - smoothstep(600.0, 3000.0, dist));
   float shore = 1.0 - smoothstep(0.0, 3.2, depth);
   float bands = smoothstep(0.35, 0.75, sin(depth * 2.8 - uTime * 1.6 + n * 6.0) * 0.5 + 0.5) * (1.0 - smoothstep(0.0, 4.5, depth));
   float foam = clamp(max(whitecap, shore * 0.85 * (0.55 + 0.45 * n2f) + bands * 0.45 * n2f), 0.0, 1.0);
@@ -190,11 +204,26 @@ void main() {
   if (uFogW > 0.5) {
     vec2 fuv = vWorld.xz / uWorldSizeF;
     bool outside = fuv.x < 0.0 || fuv.y < 0.0 || fuv.x > 1.0 || fuv.y > 1.0;
-    vec3 fs = outside ? vec3(0.0, 0.0, 1.0) : texture2D(tFogW, fuv).rgb;
-    vec2 fg = fs.rg;
-    seaMask = smoothstep(0.25, 0.6, fs.b);
-    col = mix(col, vec3(dot(col, vec3(0.33))) * 0.65, (1.0 - fg.g) * 0.5);
-    col = mix(col, vec3(0.055, 0.065, 0.075) * (0.8 + 0.4 * n), (1.0 - fg.r) * 0.9);
+    seaMask = outside ? 1.0 : smoothstep(0.3, 0.7, texture2D(tSeaMask, fuv).r);
+    vec2 px = 1.0 / uFogSize;
+    vec2 w = (vec2(texture2D(uNoise, vWorld.xz * 0.0031).r, texture2D(uNoise, vWorld.xz * 0.0031 + 0.5).g) - 0.5) * px * 2.2;
+    vec2 fg = vec2(0.0);
+    if (outside) fg = vec2(0.0);
+    else {
+      for (int j = -1; j <= 1; j++)
+        for (int i = -1; i <= 1; i++) {
+          float wt = (i == 0 ? 2.0 : 1.0) * (j == 0 ? 2.0 : 1.0);
+          fg += texture2D(tFogW, fuv + w + vec2(float(i), float(j)) * px * 1.3).rg * wt;
+        }
+      fg /= 16.0;
+      float nn = texture2D(uNoise, vWorld.xz * 0.009).b - 0.5;
+      fg = smoothstep(vec2(0.3), vec2(0.7), fg + nn * 0.18);
+    }
+    col = mix(col, vec3(dot(col, vec3(0.33))) * 0.7, (1.0 - fg.g) * 0.45);
+    float m1 = texture2D(uNoise, vWorld.xz * 0.0011 + vec2(uTime * 0.0015, uTime * 0.0007)).r;
+    float m2 = texture2D(uNoise, vWorld.xz * 0.0042 - vec2(uTime * 0.003, -uTime * 0.002)).g;
+    vec3 mist = uMistColor * (0.55 + 0.62 * smoothstep(0.3, 0.8, m1 * 0.62 + m2 * 0.38));
+    col = mix(col, mist, (1.0 - fg.r) * 0.96);
   }
   float alpha = mix(0.0, 1.0, smoothstep(-0.2, 1.6, depth));
   alpha = max(alpha, foam * smoothstep(-0.3, 0.4, depth));
@@ -337,8 +366,12 @@ export class Ocean {
           uLightColor: { value: new THREE.Color(1, 1, 1) },
           uAmbient: { value: new THREE.Color(0.4, 0.45, 0.5) },
           uFoamAmount: { value: 1 },
+          uNormalStrength: { value: 1 },
           uLightning: { value: 0 },
           tFogW: { value: null },
+          tSeaMask: { value: null },
+          uFogSize: { value: new THREE.Vector2(1, 1) },
+          uMistColor: { value: new THREE.Color(0.3, 0.32, 0.35) },
           uFogW: { value: 0 },
           uWorldSizeF: { value: new THREE.Vector2(1, 1) },
           tReflect: { value: null },

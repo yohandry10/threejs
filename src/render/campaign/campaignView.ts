@@ -45,8 +45,12 @@ export class CampaignView {
     this.scene.add(this.terrain.group);
     this.ocean = new Ocean(this.env.uniforms, this.tex.height, new THREE.Vector2(geo.W, geo.H), settings.water);
     this.ocean.material.uniforms.tFogW.value = this.tex.fog;
+    this.ocean.material.uniforms.tSeaMask.value = this.tex.seaMask;
+    this.ocean.material.uniforms.uFogSize.value.set(geo.navW, geo.navH);
     this.ocean.material.uniforms.uFogW.value = 1;
     this.ocean.material.uniforms.uWorldSizeF.value.set(geo.W, geo.H);
+    // seen from strategy heights the sea reads calmer: fewer steep facets catching the horizon
+    this.ocean.material.uniforms.uNormalStrength.value = 0.5;
     this.scene.add(this.ocean.mesh);
     this.water = new Waterways(geo, this.env.uniforms, this.tex.fog);
     this.scene.add(this.water.group);
@@ -54,6 +58,7 @@ export class CampaignView {
     this.scene.add(this.veg.group);
     this.settlements = new Settlements(sim);
     this.scene.add(this.settlements.group);
+    this.terrainU.tTown.value = this.settlements.groundTex;
     this.forces = new Forces(sim);
     this.forces.plazaOf = (pid) => this.settlements.entries.get(pid)?.vis.plaza ?? null;
     this.scene.add(this.forces.group);
@@ -136,7 +141,12 @@ export class CampaignView {
     vegUniforms.uWinter.value = this.terrainU.uWinter.value;
     vegUniforms.uAutumn.value = this.terrainU.uAutumn.value;
     vegUniforms.uWind.value = 1 + this.env.storm * 2;
-    this.terrainU.uBorderWidth.value = Math.min(28, Math.max(4, this.cam.distance * 0.0055));
+    this.terrainU.uBorderWidth.value = Math.min(30, Math.max(3, this.cam.distance * 0.0058));
+    // unexplored mist takes the colour of the sky's haze
+    const mist = this.terrainU.uMistColor.value;
+    mist.copy(this.env.fog.color).multiplyScalar(0.62).lerp(new THREE.Color(0.2, 0.21, 0.23), 0.35);
+    (this.ocean.material.uniforms.uMistColor.value as THREE.Color).copy(mist);
+    (this.water.riverMat.uniforms.uMistColor.value as THREE.Color).copy(mist);
     syncShipLighting(this.env, this.time);
     WakeTrail.updateShared(this.time, 0.35 + Math.min(1, this.env.sun.intensity * 0.3));
   }

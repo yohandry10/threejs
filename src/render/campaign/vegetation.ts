@@ -1,74 +1,11 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Biome, heightAt, type WorldGeo } from '../../sim/world/geo';
 import { Rng } from '../../core/rng';
+import { buildTreeGeometries, type TreeDetail } from '../env/trees';
 
-function withColor(g: THREE.BufferGeometry, c: THREE.Color, crown: number): THREE.BufferGeometry {
-  g = g.index ? g.toNonIndexed() : g;
-  g.deleteAttribute('uv');
-  const n = g.attributes.position.count;
-  const col = new Float32Array(n * 3);
-  const cr = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const k = 0.85 + ((i * 7919) % 13) / 60;
-    col[i * 3] = c.r * k;
-    col[i * 3 + 1] = c.g * k;
-    col[i * 3 + 2] = c.b * k;
-    cr[i] = crown;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setAttribute('aCrown', new THREE.BufferAttribute(cr, 1));
-  return g;
-}
-
-function jitter(g: THREE.BufferGeometry, amt: number, seed: number) {
-  const r = new Rng(seed);
-  const p = g.attributes.position as THREE.BufferAttribute;
-  const map = new Map<string, [number, number, number]>();
-  for (let i = 0; i < p.count; i++) {
-    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    let d = map.get(key);
-    if (!d) map.set(key, (d = [r.range(-amt, amt), r.range(-amt, amt), r.range(-amt, amt)]));
-    p.setXYZ(i, p.getX(i) + d[0], p.getY(i) + d[1], p.getZ(i) + d[2]);
-  }
-  return g;
-}
-
-const trunkC = new THREE.Color(0.32, 0.22, 0.14);
-
-export function treeGeometries(): THREE.BufferGeometry[] {
-  // 0 conifer
-  const con: THREE.BufferGeometry[] = [];
-  con.push(withColor(new THREE.CylinderGeometry(0.35, 0.5, 3, 5).translate(0, 1.5, 0), trunkC, 0));
-  const layers = [
-    [3.6, 5.5, 2.2],
-    [2.9, 4.6, 5.0],
-    [2.0, 4.0, 7.6],
-  ];
-  layers.forEach(([r, h, y], i) => con.push(withColor(jitter(new THREE.ConeGeometry(r, h, 7).translate(0, y + h / 2, 0), 0.25, i), new THREE.Color(0.13, 0.25, 0.14), 1)));
-  // 1 broadleaf
-  const bl: THREE.BufferGeometry[] = [];
-  bl.push(withColor(new THREE.CylinderGeometry(0.3, 0.55, 4.5, 5).translate(0, 2.25, 0), trunkC, 0));
-  bl.push(withColor(jitter(new THREE.IcosahedronGeometry(3.6, 1).scale(1, 0.85, 1).translate(0, 7, 0), 0.5, 11), new THREE.Color(0.2, 0.34, 0.12), 1));
-  bl.push(withColor(jitter(new THREE.IcosahedronGeometry(2.4, 0).translate(1.8, 5.8, 0.8), 0.3, 12), new THREE.Color(0.22, 0.36, 0.13), 1));
-  // 2 cypress
-  const cy: THREE.BufferGeometry[] = [];
-  cy.push(withColor(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 5).translate(0, 0.75, 0), trunkC, 0));
-  const pts: THREE.Vector2[] = [];
-  for (let i = 0; i <= 8; i++) {
-    const t = i / 8;
-    pts.push(new THREE.Vector2(Math.sin(Math.PI * Math.pow(t, 0.8)) * 1.3 * (1 - t * 0.3) + 0.01, t * 10));
-  }
-  cy.push(withColor(new THREE.LatheGeometry(pts, 7).translate(0, 1.2, 0), new THREE.Color(0.12, 0.22, 0.1), 1));
-  // 3 olive / scrub tree (southern)
-  const ol: THREE.BufferGeometry[] = [];
-  ol.push(withColor(new THREE.CylinderGeometry(0.3, 0.5, 2.6, 5).rotateZ(0.2).translate(0.2, 1.3, 0), trunkC, 0));
-  ol.push(withColor(jitter(new THREE.IcosahedronGeometry(2.6, 1).scale(1.3, 0.7, 1.2).translate(0.4, 4.0, 0), 0.4, 21), new THREE.Color(0.34, 0.38, 0.2), 1));
-  // 4 bush
-  const bu = [withColor(jitter(new THREE.IcosahedronGeometry(1.3, 0).scale(1.2, 0.8, 1.2).translate(0, 0.8, 0), 0.25, 31), new THREE.Color(0.22, 0.3, 0.12), 1)];
-  // 5 rock
-  const ro = [withColor(jitter(new THREE.DodecahedronGeometry(2.2, 0).scale(1.3, 0.8, 1).translate(0, 0.6, 0), 0.5, 41), new THREE.Color(0.45, 0.43, 0.4), 0)];
-  return [con, bl, cy, ol, bu, ro].map((parts) => mergeGeometries(parts)!);
+/** Tree geometries by type (0 conifer, 1 broadleaf, 2 cypress, 3 olive, 4 bush, 5 rock). */
+export function treeGeometries(detail: TreeDetail = 'hi'): THREE.BufferGeometry[] {
+  return buildTreeGeometries(detail);
 }
 
 export const vegUniforms = {
@@ -115,7 +52,8 @@ export function makeVegMaterial(): THREE.MeshStandardMaterial {
 }
 
 interface Chunk {
-  meshes: THREE.InstancedMesh[];
+  hi: THREE.InstancedMesh[];
+  lo: THREE.InstancedMesh[];
   center: THREE.Vector3;
   radius: number;
 }
@@ -124,14 +62,16 @@ export class Vegetation {
   group = new THREE.Group();
   material: THREE.MeshStandardMaterial;
   geoms: THREE.BufferGeometry[];
+  geomsLo: THREE.BufferGeometry[];
   chunks: Chunk[] = [];
   count = 0;
   constructor(g: WorldGeo, density: number, castShadow: boolean) {
     this.material = makeVegMaterial();
-    this.geoms = treeGeometries();
+    this.geoms = treeGeometries('hi');
+    this.geomsLo = treeGeometries('lo');
     const r = new Rng(4242);
-    const CX = 8;
-    const CZ = 6;
+    const CX = 16;
+    const CZ = 11;
     const cw = g.W / CX;
     const cz = g.H / CZ;
     type Inst = { x: number; y: number; z: number; s: number; rot: number; c: THREE.Color };
@@ -214,7 +154,8 @@ export class Vegetation {
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     for (let i = 0; i < CX * CZ; i++) {
-      const meshes: THREE.InstancedMesh[] = [];
+      const hiList: THREE.InstancedMesh[] = [];
+      const loList: THREE.InstancedMesh[] = [];
       const ccx = (i % CX) * cw + cw / 2;
       const ccz = Math.floor(i / CX) * cz + cz / 2;
       for (let t = 0; t < 6; t++) {
@@ -230,12 +171,20 @@ export class Vegetation {
         im.instanceMatrix.needsUpdate = true;
         if (im.instanceColor) im.instanceColor.needsUpdate = true;
         im.castShadow = castShadow && t !== 5;
-        im.receiveShadow = false;
+        im.receiveShadow = true;
         im.computeBoundingSphere();
-        meshes.push(im);
-        this.group.add(im);
+        // the far version shares the instance buffers
+        const lo = new THREE.InstancedMesh(this.geomsLo[t], this.material, list.length);
+        lo.instanceMatrix = im.instanceMatrix;
+        lo.instanceColor = im.instanceColor;
+        lo.castShadow = im.castShadow;
+        lo.receiveShadow = false;
+        lo.computeBoundingSphere();
+        hiList.push(im);
+        loList.push(lo);
+        this.group.add(im, lo);
       }
-      this.chunks.push({ meshes, center: new THREE.Vector3(ccx, 50, ccz), radius: Math.hypot(cw, cz) / 2 });
+      this.chunks.push({ hi: hiList, lo: loList, center: new THREE.Vector3(ccx, 50, ccz), radius: Math.hypot(cw, cz) / 2 });
     }
   }
   update(camera: THREE.Camera, time: number, camDistance: number) {
@@ -244,15 +193,19 @@ export class Vegetation {
     vegUniforms.uFadeEnd.value = fadeEnd;
     vegUniforms.uFadeStart.value = fadeEnd * 0.7;
     const visibleAll = camDistance < 2400;
+    const hiDist = 380 + camDistance * 0.25;
     for (const c of this.chunks) {
       const d = Math.hypot(c.center.x - camera.position.x, c.center.z - camera.position.z) - c.radius;
       const vis = visibleAll && d < fadeEnd + 50;
-      for (const m of c.meshes) m.visible = vis;
+      const hi = vis && d < hiDist;
+      for (const m of c.hi) m.visible = hi;
+      for (const m of c.lo) m.visible = vis && !hi;
     }
   }
   dispose() {
     for (const g of this.geoms) g.dispose();
+    for (const g of this.geomsLo) g.dispose();
     this.material.dispose();
-    for (const c of this.chunks) for (const m of c.meshes) m.dispose();
+    for (const c of this.chunks) for (const m of c.hi) m.dispose();
   }
 }

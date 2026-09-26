@@ -143,13 +143,29 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
             const dp = Math.hypot(x - p[0], z - p[1]);
             m *= 1 - 0.78 * Math.exp(-((dp / (r.width * 0.85)) ** 2));
           }
-          const rid = 0.45 + 0.75 * n2.ridged(u * 20 + 5, v * 20 + 1, 5);
+          const rid = 0.45 + 0.75 * n2.ridged(u * 20 + 5, v * 20 + 1, 4);
           h += r.height * m * rid * inland;
         }
       }
       height[i] = h;
     }
     if (iz % 64 === 0) progress(0.02 + (iz / hmH) * 0.3, 'Raising the continents');
+  }
+
+  // weather the high ground: soften the ridged noise's spikes into rounded, eroded crests
+  {
+    const tmp = new Float32Array(height.length);
+    for (let pass = 0; pass < 2; pass++) {
+      tmp.set(height);
+      for (let iz = 1; iz < hmH - 1; iz++)
+        for (let ix = 1; ix < hmW - 1; ix++) {
+          const i = iz * hmW + ix;
+          const h = tmp[i];
+          if (h < 30) continue;
+          const avg = (tmp[i - 1] + tmp[i + 1] + tmp[i - hmW] + tmp[i + hmW]) * 0.125 + (tmp[i - hmW - 1] + tmp[i - hmW + 1] + tmp[i + hmW - 1] + tmp[i + hmW + 1]) * 0.0625 + h * 0.25;
+          height[i] = h + (avg - h) * smoothstep(30, 110, h) * 0.75;
+        }
+    }
   }
 
   // ---------------------------------------------------------------- rivers
@@ -181,14 +197,35 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       }
       dense.push(spline[spline.length - 1]);
     }
-    // meander
+    // carry the course on until it actually meets the sea, so every mouth opens into open water
+    {
+      const [lx, lz] = dense[dense.length - 1];
+      const [px, pz] = dense[Math.max(0, dense.length - 6)];
+      const l = Math.hypot(lx - px, lz - pz) || 1;
+      const ux = (lx - px) / l;
+      const uz = (lz - pz) / l;
+      let x = lx;
+      let z = lz;
+      let wet = 0;
+      for (let k = 0; k < 90 && wet < 4; k++) {
+        x += ux * 7;
+        z += uz * 7;
+        if (x < 0 || z < 0 || x >= W || z >= H) break;
+        dense.push([x, z]);
+        if (hAt(x, z) < -1.5) wet++;
+      }
+    }
+    // meander (tangents from the undisplaced course, so neighbours never fold over each other)
+    const base = dense.map((p) => [p[0], p[1]] as [number, number]);
     for (let i = 1; i < dense.length - 1; i++) {
-      const [ax, az] = dense[i - 1];
-      const [bx, bz] = dense[i + 1];
+      const [ax, az] = base[Math.max(0, i - 3)];
+      const [bx, bz] = base[Math.min(base.length - 1, i + 3)];
       const tx = bx - ax;
       const tz = bz - az;
       const l = Math.hypot(tx, tz) || 1;
-      const m = n3.noise(i * 0.012 + rivers.length * 10, 0.5) * 38 + n3.noise(i * 0.05 + 3.3, rivers.length) * 9;
+      // meanders die out toward the mouth so the extended reach runs straight into the sea
+      const calm = Math.min(1, (dense.length - 1 - i) / 25);
+      const m = (n3.noise(i * 0.012 + rivers.length * 10, 0.5) * 38 + n3.noise(i * 0.05 + 3.3, rivers.length) * 9) * calm;
       dense[i] = [dense[i][0] + (-tz / l) * m, dense[i][1] + (tx / l) * m];
     }
     const n = dense.length;
@@ -209,7 +246,10 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
     // ensure monotonic descent and smooth
     for (let i = 1; i < n; i++) levels[i] = Math.min(levels[i], levels[i - 1] - 0.02);
     for (let i = 0; i < n; i++) if (levels[i] < 0.6) levels[i] = 0.6 - i * 0.0001;
-    rivers.push({ name: rd.name, pts, widths, levels });
+    // the mouth: where the (uncarved) land gives way to the sea for good
+    let mouth = n - 1;
+    while (mouth > 1 && hAt(dense[mouth - 1][0], dense[mouth - 1][1]) < -0.3) mouth--;
+    rivers.push({ name: rd.name, pts, widths, levels, mouth });
   }
   // ---------------------------------------------------------------- nav coarse pass
   progress(0.42, 'Charting coasts');
@@ -384,7 +424,9 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       const bed = lvl - 2.2 - w * 0.05;
       const inner = half + 10;
       if (d <= inner) {
-        height[idx] = bed + (lvl + 1.2 - bed) * smoothstep(half * 0.55, inner, d);
+        const t = bed + (lvl + 1.2 - bed) * smoothstep(half * 0.55, inner, d);
+        // at the coast the channel only ever deepens the sea floor, never builds a bar across it
+        height[idx] = lvl < 0.7 ? Math.min(height[idx], t) : t;
       } else {
         const k = smoothstep(inner, inner + rB[idx], d);
         const bankTop = lvl + 1.2 + k * 3;
@@ -397,6 +439,18 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
 
   // ---------------------------------------------------------------- final nav & biomes
   progress(0.56, 'Surveying the land');
+  // proximity to open sea (≈6 texels): beaches only form along real coasts
+  const nearSea = new Uint8Array(hmW * hmH);
+  for (let i = 0; i < hmW * hmH; i++) nearSea[i] = height[i] < -0.5 && !(rD[i] < rH[i] + 4) ? 1 : 0;
+  for (let pass = 0; pass < 6; pass++) {
+    const prev = nearSea.slice();
+    for (let iz = 1; iz < hmH - 1; iz++)
+      for (let ix = 1; ix < hmW - 1; ix++) {
+        const i = iz * hmW + ix;
+        if (prev[i]) continue;
+        if (prev[i - 1] || prev[i + 1] || prev[i - hmW] || prev[i + hmW]) nearSea[i] = 1;
+      }
+  }
   const biome = new Uint8Array(hmW * hmH);
   const moisture = new Uint8Array(hmW * hmH);
   const grainSites = provinces.filter((p) => p.resources.includes('grain') || p.resources.includes('wool') || p.resources.includes('wine'));
@@ -436,7 +490,7 @@ export function generateWorld(progress: Progress = () => {}): WorldGeo {
       let b: Biome;
       if (h > snowline + n1.noise(u * 40, v * 40) * 25) b = Biome.Snow;
       else if (slope > 0.75 || h > 230 + n1.noise(u * 30, v * 30) * 30) b = Biome.Rock;
-      else if (h < 3.2 + n3.noise(u * 60, v * 60) * 1.2 && slope < 0.25) b = Biome.Beach;
+      else if (h < 3.2 + n3.noise(u * 60, v * 60) * 1.2 && slope < 0.25 && nearSea[i] && !(rD[i] < rH[i] + 45)) b = Biome.Beach;
       else if (climate === 'volcanic') b = h > 70 ? Biome.Ash : m > 0.62 ? Biome.Conifer : Biome.Ash;
       else if (h > 115 || slope > 0.42) b = v < 0.3 || climate === 'north' ? (m > 0.55 ? Biome.Conifer : Biome.Tundra) : Biome.Hills;
       else if (m > 0.66) b = v < 0.33 || climate === 'north' ? Biome.Conifer : Biome.Forest;

@@ -60,6 +60,8 @@ export interface RiverGeo {
   pts: Float32Array; // x,z pairs
   widths: Float32Array;
   levels: Float32Array; // water surface height
+  /** index of the first point of the reach that runs out into the sea */
+  mouth?: number;
 }
 
 export interface RoadGeo {

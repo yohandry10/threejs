@@ -59,7 +59,18 @@ export interface SettlementVisual {
   mills: THREE.Object3D[];
   bannerTop: THREE.Vector3;
   radius: number;
+  /** Optional ground mask (R = packed earth / lanes, G = gardens) in world-aligned texels. */
+  ground?: TownGround;
   dispose(): void;
+}
+export interface TownGround {
+  x0: number;
+  z0: number;
+  w: number;
+  h: number;
+  step: number;
+  /** RG interleaved, 0..255 */
+  data: Uint8Array;
 }
 
 interface Buckets {

@@ -1,0 +1,10 @@
+import './canvasStub';
+import { generateWorld } from '../../src/sim/world/worldGen';
+import { Vegetation } from '../../src/render/campaign/vegetation';
+const geo = generateWorld();
+const t0 = performance.now();
+const v = new Vegetation(geo, 1, true);
+console.log('trees', v.count, 'ms', (performance.now() - t0).toFixed(0));
+const per: number[] = [0, 0, 0, 0, 0, 0];
+for (const c of v.chunks) for (const m of c.hi) per[v.geoms.indexOf(m.geometry)] += m.count;
+console.log('per type', per, 'hi', v.geoms.map((g) => g.getAttribute('position').count / 3), 'lo', v.geomsLo.map((g) => g.getAttribute('position').count / 3));

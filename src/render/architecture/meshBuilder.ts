@@ -25,6 +25,33 @@ export class Bucket {
     }
   }
 
+  /** Triangle with a colour per corner (used for baked ambient occlusion gradients). */
+  tri3(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, ua: [number, number], ub: [number, number], uc: [number, number], ca: THREE.Color, cb: THREE.Color, cc: THREE.Color) {
+    const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+    this.pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    this.nrm.push(n.x, n.y, n.z, n.x, n.y, n.z, n.x, n.y, n.z);
+    this.uv.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
+    this.col.push(ca.r, ca.g, ca.b, cb.r, cb.g, cb.b, cc.r, cc.g, cc.b);
+  }
+
+  /** Append a non-indexed geometry (position, normal, optional colour) transformed by m, tinted. */
+  addGeometry(g: THREE.BufferGeometry, m: THREE.Matrix4, tint: THREE.Color) {
+    const p = g.getAttribute('position');
+    const n = g.getAttribute('normal');
+    const c = g.getAttribute('color');
+    const nm = new THREE.Matrix3().getNormalMatrix(m);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(m);
+      this.pos.push(v.x, v.y, v.z);
+      v.fromBufferAttribute(n, i).applyMatrix3(nm).normalize();
+      this.nrm.push(v.x, v.y, v.z);
+      this.uv.push(0, 0);
+      if (c) this.col.push(c.getX(i) * tint.r, c.getY(i) * tint.g, c.getZ(i) * tint.b);
+      else this.col.push(tint.r, tint.g, tint.b);
+    }
+  }
+
   /** Quad a-b-c-d (counter-clockwise when viewed from the front). */
   quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, uw: number, vh: number, color: THREE.Color, u0 = 0, v0 = 0) {
     this.tri(a, b, c, [u0, v0], [u0 + uw, v0], [u0 + uw, v0 + vh], color);

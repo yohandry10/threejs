@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Biome, type WorldGeo } from '../../sim/world/geo';
+import { Noise2D } from '../../core/noise';
 
 export interface WorldTextures {
   height: THREE.DataTexture;
@@ -12,6 +13,10 @@ export interface WorldTextures {
   provOwner: THREE.DataTexture; // per-province owner colour + owner index (alpha)
   fog: THREE.DataTexture; // R explored, G visible (nav res)
   range: THREE.DataTexture; // movement range overlay (nav res)
+  seaMask: THREE.DataTexture; // 1 where the ocean surface may be drawn (heightmap res, excludes river channels)
+  provField: THREE.DataTexture; // R: province id + 1, G: nearest other province id + 1 (hi-res, nearest)
+  borderDist: THREE.DataTexture; // distance to the nearest province border in texels * 8 (hi-res, linear)
+  fieldScale: number; // world units per provField texel
 }
 
 function dataTex(data: ArrayBufferView, w: number, h: number, format: THREE.PixelFormat, type: THREE.TextureDataType, filter: THREE.MagnificationTextureFilter, mips = false): THREE.DataTexture {
@@ -99,7 +104,8 @@ export function buildWorldTextures(g: WorldGeo): WorldTextures {
     for (let z = z0; z <= z1; z++)
       for (let x = x0; x <= x1; x++) {
         const d = Math.hypot(x * g.hmStep - p.x, z * g.hmStep - p.z) / R;
-        if (d < 1) C[(z * W + x) * 4] = Math.max(C[(z * W + x) * 4], Math.min(1, (1 - d) * 3));
+        // town grounds are painted by the settlement ground mask; keep only a faint trampled ring
+        if (d < 1) C[(z * W + x) * 4] = Math.max(C[(z * W + x) * 4], Math.min(1, (1 - d) * 3) * 0.12);
       }
   }
   for (const r of g.rivers) {
@@ -188,7 +194,174 @@ export function buildWorldTextures(g: WorldGeo): WorldTextures {
   for (let c = 0; c < g.navW * g.navH; c++) fogData[c * 4 + 2] = g.nav[c] <= 1 || g.coastDist[c] <= 1 ? 255 : 0;
   const fog = dataTex(fogData, g.navW, g.navH, THREE.RGBAFormat, THREE.UnsignedByteType, THREE.LinearFilter);
   const range = dataTex(new Uint8Array(g.navW * g.navH), g.navW, g.navH, THREE.RedFormat, THREE.UnsignedByteType, THREE.LinearFilter);
-  return { height, matA, matB, matC, provId, provColor, provColorPrev, provOwner, fog, range };
+  const seaMask = buildSeaMask(g);
+  const pf = buildProvinceField(g);
+  return { height, matA, matB, matC, provId, provColor, provColorPrev, provOwner, fog, range, seaMask, provField: pf.field, borderDist: pf.dist, fieldScale: pf.scale };
+}
+
+/** Ocean may be drawn everywhere except inside river channels (which sit below sea level). */
+function buildSeaMask(g: WorldGeo): THREE.DataTexture {
+  const W = g.hmW;
+  const H = g.hmH;
+  let m = new Float32Array(W * H).fill(1);
+  // carve out the river channels from their actual polylines (not the coarse nav grid)
+  for (const r of g.rivers) {
+    const n = r.widths.length;
+    for (let i = 0; i < n; i++) {
+      const px = r.pts[i * 2];
+      const pz = r.pts[i * 2 + 1];
+      // the river mouth itself opens into the sea
+      if (i >= (r.mouth ?? n - 2)) continue;
+      const rad = r.widths[i] * 0.5 + 14;
+      const x0 = Math.max(0, Math.floor((px - rad) / g.hmStep));
+      const x1 = Math.min(W - 1, Math.ceil((px + rad) / g.hmStep));
+      const z0 = Math.max(0, Math.floor((pz - rad) / g.hmStep));
+      const z1 = Math.min(H - 1, Math.ceil((pz + rad) / g.hmStep));
+      for (let z = z0; z <= z1; z++)
+        for (let x = x0; x <= x1; x++) {
+          const d = Math.hypot(x * g.hmStep - px, z * g.hmStep - pz);
+          if (d < rad) m[z * W + x] = Math.min(m[z * W + x], Math.max(0, (d - rad * 0.7) / (rad * 0.3)));
+        }
+    }
+  }
+  // soften the river mouths
+  for (let pass = 0; pass < 3; pass++) {
+    const o = new Float32Array(W * H);
+    for (let z = 0; z < H; z++)
+      for (let x = 0; x < W; x++) {
+        let sum = 0;
+        let n = 0;
+        for (let dz = -1; dz <= 1; dz++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = Math.min(W - 1, Math.max(0, x + dx));
+            const zz = Math.min(H - 1, Math.max(0, z + dz));
+            sum += m[zz * W + xx];
+            n++;
+          }
+        o[z * W + x] = sum / n;
+      }
+    m = o;
+  }
+  const u = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) u[i] = Math.round(m[i] * 255);
+  return dataTex(u, W, H, THREE.RedFormat, THREE.UnsignedByteType, THREE.LinearFilter);
+}
+
+/**
+ * Smooth province map at 4x nav resolution: a Gaussian-weighted vote over nearby nav cells with a
+ * gentle noise warp gives organic curved borders. A chamfer distance transform then records, for
+ * every texel, the distance to the nearest border and the province on the other side, so the
+ * terrain shader can draw crisp anti-aliased realm and province lines at any zoom.
+ */
+function buildProvinceField(g: WorldGeo) {
+  const S = 4;
+  const PW = g.navW * S;
+  const PH = g.navH * S;
+  const texel = g.navStep / S;
+  const ids = new Int16Array(PW * PH);
+  const noise = new Noise2D(4242);
+  const nav = (x: number, z: number) => g.province[Math.max(0, Math.min(g.navH - 1, z)) * g.navW + Math.max(0, Math.min(g.navW - 1, x))];
+  const cand = new Int16Array(25);
+  const wts = new Float32Array(25);
+  for (let z = 0; z < PH; z++)
+    for (let x = 0; x < PW; x++) {
+      let wx = (x + 0.5) * texel;
+      let wz = (z + 0.5) * texel;
+      wx += noise.noise(wx / 110, wz / 110) * 9;
+      wz += noise.noise(wx / 110 + 31, wz / 110 - 17) * 9;
+      const fx = wx / g.navStep - 0.5;
+      const fz = wz / g.navStep - 0.5;
+      const ix = Math.round(fx);
+      const iz = Math.round(fz);
+      const c0 = nav(ix, iz);
+      // interior fast path
+      if (nav(ix - 1, iz) === c0 && nav(ix + 1, iz) === c0 && nav(ix, iz - 1) === c0 && nav(ix, iz + 1) === c0 && nav(ix - 1, iz - 1) === c0 && nav(ix + 1, iz + 1) === c0 && nav(ix + 1, iz - 1) === c0 && nav(ix - 1, iz + 1) === c0) {
+        ids[z * PW + x] = c0;
+        continue;
+      }
+      let nc = 0;
+      for (let dz = -2; dz <= 2; dz++)
+        for (let dx = -2; dx <= 2; dx++) {
+          const cx = ix + dx;
+          const cz = iz + dz;
+          const id = nav(cx, cz);
+          const d2 = (cx - fx) ** 2 + (cz - fz) ** 2;
+          const w = Math.exp(-d2 / (2 * 0.8 * 0.8));
+          let k = 0;
+          while (k < nc && cand[k] !== id) k++;
+          if (k === nc) {
+            cand[nc] = id;
+            wts[nc] = 0;
+            nc++;
+          }
+          wts[k] += w;
+        }
+      let best = 0;
+      for (let k = 1; k < nc; k++) if (wts[k] > wts[best]) best = k;
+      ids[z * PW + x] = cand[best];
+    }
+  // distance transform with the id of the province across the border
+  const INF = 1e9;
+  const dist = new Float32Array(PW * PH).fill(INF);
+  const nb = new Int16Array(PW * PH).fill(-1);
+  for (let z = 0; z < PH; z++)
+    for (let x = 0; x < PW; x++) {
+      const i = z * PW + x;
+      const a = ids[i];
+      if (a < 0) continue;
+      const nbs = [x > 0 ? ids[i - 1] : a, x < PW - 1 ? ids[i + 1] : a, z > 0 ? ids[i - PW] : a, z < PH - 1 ? ids[i + PW] : a];
+      for (const b of nbs)
+        if (b !== a && b >= 0) {
+          dist[i] = 0.5;
+          nb[i] = b;
+          break;
+        }
+    }
+  const relax = (i: number, j: number, cost: number) => {
+    if (dist[j] + cost < dist[i] && nb[j] >= 0 && nb[j] !== ids[i]) {
+      dist[i] = dist[j] + cost;
+      nb[i] = nb[j];
+    } else if (dist[j] + cost < dist[i] && nb[j] >= 0 && ids[j] !== ids[i]) {
+      dist[i] = dist[j] + cost;
+      nb[i] = ids[j];
+    }
+  };
+  const D1 = 1;
+  const D2 = Math.SQRT2;
+  for (let z = 0; z < PH; z++)
+    for (let x = 0; x < PW; x++) {
+      const i = z * PW + x;
+      if (ids[i] < 0) continue;
+      if (x > 0) relax(i, i - 1, D1);
+      if (z > 0) {
+        relax(i, i - PW, D1);
+        if (x > 0) relax(i, i - PW - 1, D2);
+        if (x < PW - 1) relax(i, i - PW + 1, D2);
+      }
+    }
+  for (let z = PH - 1; z >= 0; z--)
+    for (let x = PW - 1; x >= 0; x--) {
+      const i = z * PW + x;
+      if (ids[i] < 0) continue;
+      if (x < PW - 1) relax(i, i + 1, D1);
+      if (z < PH - 1) {
+        relax(i, i + PW, D1);
+        if (x < PW - 1) relax(i, i + PW + 1, D2);
+        if (x > 0) relax(i, i + PW - 1, D2);
+      }
+    }
+  const fieldData = new Uint8Array(PW * PH * 4);
+  const distData = new Uint8Array(PW * PH);
+  for (let i = 0; i < PW * PH; i++) {
+    fieldData[i * 4] = ids[i] + 1;
+    fieldData[i * 4 + 1] = nb[i] + 1;
+    distData[i] = Math.min(255, Math.round((dist[i] >= INF ? 32 : dist[i]) * 8));
+  }
+  return {
+    field: dataTex(fieldData, PW, PH, THREE.RGBAFormat, THREE.UnsignedByteType, THREE.NearestFilter),
+    dist: dataTex(distData, PW, PH, THREE.RedFormat, THREE.UnsignedByteType, THREE.LinearFilter),
+    scale: texel,
+  };
 }
 
 export function disposeWorldTextures(t: WorldTextures) {

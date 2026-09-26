@@ -63,6 +63,14 @@ export class CampaignScene implements GameScene {
     this.view.cam.sensitivity = app.settings.mouseSensitivity;
     this.view.cam.edgeScroll = app.settings.edgeScroll;
     this.view.env.dayLength = app.settings.dayLength;
+    // QA overrides: ?weather=clear&tod=0.42 pins the sky for comparable screenshots
+    const qp = new URLSearchParams(location.search);
+    this.debugWeather = qp.get('weather');
+    if (qp.get('tod')) {
+      this.debugTod = Number(qp.get('tod'));
+      this.view.env.t = this.debugTod;
+      this.view.env.paused = true;
+    }
     this.view.env.paused = app.settings.lockTime;
     const cap = sim.geo.provinces[sim.fac(sim.s.player).capital] ?? sim.geo.provinces[0];
     this.view.cam.focus(cap.x, cap.z + 120, 900, true);
@@ -165,13 +173,15 @@ export class CampaignScene implements GameScene {
     this.updateWeatherForCamera(true);
   }
   private weatherRegion = '';
+  private debugWeather: string | null = null;
+  private debugTod: number | null = null;
   updateWeatherForCamera(instant = false) {
     const c = this.view.cam.target;
     const pid = this.sim.geo.province[cellOf(this.sim.geo, c.x, c.z)];
     const region = pid >= 0 ? this.sim.geo.provinces[pid].region : 'sea';
     if (region !== this.weatherRegion || instant) {
       this.weatherRegion = region;
-      this.view.env.setWeather(this.sim.s.weather.regions[region] ?? 'clear', seasonOf(this.sim.s.turn), instant);
+      this.view.env.setWeather((this.debugWeather ?? this.sim.s.weather.regions[region] ?? 'clear') as never, seasonOf(this.sim.s.turn), instant);
     }
   }
 
@@ -629,7 +639,7 @@ export class CampaignScene implements GameScene {
       { p: new THREE.Vector3(cap.x, 0, cap.z + 100), d: 820, yaw: 0 },
     ];
     this.introT = 0;
-    this.view.env.t = 0.7;
+    this.view.env.t = this.debugTod ?? 0.7;
   }
   private updateIntro(dt: number) {
     if (this.introT < 0) return;
@@ -688,6 +698,13 @@ export class CampaignScene implements GameScene {
       if (JSON.stringify(this.hover) !== prevHover) this.app.notify();
     }
     this.updateWeatherForCamera();
+    // map-mode tints are a strategic overlay: close in, the land shows its own colours
+    {
+      const d = this.view.cam.distance;
+      const info = this.mapMode !== 'political' && this.mapMode !== 'terrain';
+      const t = THREE.MathUtils.smoothstep(d, info ? 250 : 450, info ? 1400 : 2300);
+      this.view.terrainU.uTintScale.value = info ? 0.5 + 0.5 * t : 0.06 + 0.94 * t;
+    }
     this.view.update(dt);
     if (this.toast && performance.now() - this.toast.t > 4500) {
       this.toast = null;
